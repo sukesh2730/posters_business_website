@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, Image as ImageIcon, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { uploadPhotoToFirebaseStorage } from '../services/orderService';
+import { uploadPhotoToFirebaseStorage, DEFAULT_FALLBACK_PRODUCT_IMAGE } from '../services/orderService';
 
 interface PhotoUploaderProps {
   photos: string[];
@@ -192,7 +192,15 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({
                 key={idx}
                 className="relative aspect-square rounded-lg overflow-hidden border border-slate-200 group bg-slate-100 shadow-xs"
               >
-                <img src={url} alt={`Uploaded ${idx + 1}`} className="w-full h-full object-cover" />
+                <img
+                  src={url}
+                  alt={`Uploaded ${idx + 1}`}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = DEFAULT_FALLBACK_PRODUCT_IMAGE;
+                  }}
+                  className="w-full h-full object-cover"
+                />
                 <button
                   type="button"
                   onClick={(e) => {

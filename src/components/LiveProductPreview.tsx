@@ -1,5 +1,6 @@
 import React from 'react';
 import { Product } from '../types';
+import { resolveProductImageUrl, DEFAULT_FALLBACK_PRODUCT_IMAGE } from '../services/orderService';
 
 interface LiveProductPreviewProps {
   product: Product;
@@ -18,7 +19,13 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
   selectedFinish,
   frameColor = 'Natural Wood',
 }) => {
-  const displayPhotos = photos.length > 0 ? photos : [product.imageUrl];
+  const defaultProductImg = resolveProductImageUrl(product);
+  const displayPhotos = photos.length > 0 ? photos : [defaultProductImg];
+
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    e.currentTarget.onerror = null;
+    e.currentTarget.src = defaultProductImg || DEFAULT_FALLBACK_PRODUCT_IMAGE;
+  };
 
   // 1. Polaroid-style preview
   if (product.category === 'polaroids') {
@@ -30,6 +37,7 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
             <img
               src={displayPhotos[0]}
               alt="Polaroid Preview"
+              onError={handleImgError}
               className={`w-full h-full object-cover transition-all ${
                 selectedFinish.toLowerCase().includes('matte') ? 'contrast-[0.95] brightness-[1.02]' : 'contrast-[1.05]'
               }`}
@@ -64,7 +72,7 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
     // Fill up to 3 slots if fewer provided
     const paddedPhotos = [...stripPhotos];
     while (paddedPhotos.length < 3) {
-      paddedPhotos.push(displayPhotos[0] || product.imageUrl);
+      paddedPhotos.push(displayPhotos[0] || defaultProductImg);
     }
 
     return (
@@ -73,7 +81,12 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
           <div className="space-y-2.5">
             {paddedPhotos.map((photo, idx) => (
               <div key={idx} className="aspect-[4/3] w-full bg-slate-100 rounded-sm overflow-hidden shadow-inner">
-                <img src={photo} alt={`Strip item ${idx + 1}`} className="w-full h-full object-cover" />
+                <img
+                  src={photo}
+                  alt={`Strip item ${idx + 1}`}
+                  onError={handleImgError}
+                  className="w-full h-full object-cover"
+                />
               </div>
             ))}
           </div>
@@ -112,7 +125,12 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
           {/* Inner White Passe-Partout Mat */}
           <div className="bg-white p-5 rounded-xs shadow-inner">
             <div className="aspect-[4/3] w-full overflow-hidden rounded-xs shadow-[inset_0_2px_8px_rgba(0,0,0,0.15)] relative">
-              <img src={displayPhotos[0]} alt="Framed Artwork" className="w-full h-full object-cover" />
+              <img
+                src={displayPhotos[0]}
+                alt="Framed Artwork"
+                onError={handleImgError}
+                className="w-full h-full object-cover"
+              />
               {/* Acrylic Glass Reflection */}
               <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent pointer-events-none" />
             </div>
@@ -134,7 +152,12 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
   return (
     <div className="flex flex-col items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white rounded-2xl border border-slate-200/80 shadow-inner">
       <div className="relative rounded-xl overflow-hidden shadow-xl max-w-sm w-full aspect-square bg-slate-100">
-        <img src={displayPhotos[0]} alt="Product Preview" className="w-full h-full object-cover" />
+        <img
+          src={displayPhotos[0]}
+          alt="Product Preview"
+          onError={handleImgError}
+          className="w-full h-full object-cover"
+        />
         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent p-4 text-white">
           <p className="font-semibold text-sm">{product.name}</p>
           <p className="text-xs text-white/80">{selectedSize} • {selectedFinish}</p>

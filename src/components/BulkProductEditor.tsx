@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { Product, ProductCategory, AspectRatioType, CollectionInfo, BulkBatchStatus } from '../types';
 import { STYLES_LIST } from '../data/defaultProducts';
-import { uploadPhotoToFirebaseStorage, saveProductToFirestore } from '../services/orderService';
+import { uploadPhotoToFirebaseStorage, saveProductToFirestore, DEFAULT_FALLBACK_PRODUCT_IMAGE } from '../services/orderService';
 
 export interface ValidatedFileItem {
   id: string;
@@ -1066,6 +1066,10 @@ export const BulkProductEditor: React.FC<BulkProductEditorProps> = ({
                   <img
                     src={item.previewUrl}
                     alt={item.name}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = DEFAULT_FALLBACK_PRODUCT_IMAGE;
+                    }}
                     className="w-full h-full object-cover"
                   />
 
@@ -1565,6 +1569,10 @@ export const BulkProductEditor: React.FC<BulkProductEditorProps> = ({
                             <img
                               src={item.previewUrl}
                               alt={item.name}
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src = DEFAULT_FALLBACK_PRODUCT_IMAGE;
+                              }}
                               className="w-full h-full object-cover"
                             />
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">

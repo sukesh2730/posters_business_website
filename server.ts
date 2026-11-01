@@ -1009,13 +1009,20 @@ app.get('/uploads/:fileName', async (req, res) => {
     path.resolve(process.cwd(), 'uploads', fileName),
   ];
 
+  // 1. Search in all candidate upload directory locations
   for (const diskPath of possiblePaths) {
     if (fs.existsSync(diskPath)) {
-      return res.sendFile(diskPath);
+      try {
+        const stat = fs.statSync(diskPath);
+        // Ensure we don't serve a 1x1 black pixel test stub if a real image can be found
+        if (stat.size > 300) {
+          return res.sendFile(diskPath);
+        }
+      } catch {}
     }
   }
 
-  // Extract ID if file name matches photo_... or img_...
+  // 2. Extract ID if file name matches photo_... or img_... and fetch from Firestore media_assets
   const idMatch = fileName.match(/^(img_[a-zA-Z0-9_]+|photo_[a-zA-Z0-9_]+)/);
   if (idMatch && db) {
     const id = idMatch[1];
@@ -1033,7 +1040,14 @@ app.get('/uploads/:fileName', async (req, res) => {
     } catch {}
   }
 
-  // CRITICAL: Return 404 rather than next() to avoid Vite/SPA returning 200 text/html for <img> tags
+  // 3. Fallback: If image file exists on disk even if small, serve it as last resort
+  for (const diskPath of possiblePaths) {
+    if (fs.existsSync(diskPath)) {
+      return res.sendFile(diskPath);
+    }
+  }
+
+  // 4. Return safe 404 rather than next() to avoid Vite/SPA returning 200 text/html for <img> tags
   return res.status(404).type('text/plain').send('Image not found');
 });
 
