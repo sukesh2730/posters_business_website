@@ -44,14 +44,17 @@ export async function validateServerOrderTotals(payload: {
       console.warn('Notice: Server validation notice, verifying with local authoritative catalog:', err.message);
     }
     
-    // Authoritative fallback using trusted catalog constants
+    // Authoritative fallback using trusted catalog constants only (fail closed on unknown products)
     let subtotal = 0;
     const validatedItems = [];
     const catalogMap = new Map(DEFAULT_PRODUCTS.map((p) => [p.id, p]));
 
     for (const it of payload.items) {
       const prod = catalogMap.get(it.productId);
-      const unitPrice = prod ? prod.price : (it.unitPrice || 0);
+      if (!prod) {
+        throw new Error(`Product "${it.productId}" was not found in the verified store catalog.`);
+      }
+      const unitPrice = prod.price;
       const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
       subtotal += unitPrice * qty;
       validatedItems.push({
@@ -77,13 +80,23 @@ export async function validateServerOrderTotals(payload: {
       }
     }
 
+    const taxableBase = Math.max(0, subtotal - validatedDiscount);
+    const gst = Math.round(taxableBase * 0.18);
+    const total = Math.max(0, subtotal + shippingCharges - validatedDiscount);
+
     return {
       valid: true,
       subtotal,
+      subtotalPaise: subtotal * 100,
+      gst,
+      gstPaise: gst * 100,
       shippingCharges,
+      shippingChargesPaise: shippingCharges * 100,
       discount: validatedDiscount,
+      discountPaise: validatedDiscount * 100,
       couponCode: appliedCoupon,
-      total: Math.max(0, subtotal + shippingCharges - validatedDiscount),
+      total,
+      totalPaise: total * 100,
       currency: 'INR',
       items: validatedItems,
     };
@@ -148,10 +161,19 @@ export async function compressImageFile(
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      // CRITICAL FIX: Fill canvas with solid white background before drawing.
-      // In HTML Canvas, transparent/alpha pixels turn pitch black when exported to image/jpeg!
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const isPngTarget = (file.type === 'image/png' || file.name.toLowerCase().endsWith('.png')) && file.size < 1.5 * 1024 * 1024;
+      const mimeType = isPngTarget ? 'image/png' : 'image/jpeg';
+      const ext = isPngTarget ? '.png' : '.jpg';
+
+      if (mimeType === 'image/jpeg') {
+        // JPEG has no alpha channel. In HTML Canvas, transparent/alpha pixels turn pitch black
+        // when serialized to image/jpeg without a composite background fill.
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      } else {
+        // For PNG, preserve the full alpha transparency channel
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
 
       try {
         ctx.drawImage(img, 0, 0, width, height);
@@ -160,9 +182,6 @@ export async function compressImageFile(
         resolve(file);
         return;
       }
-
-      const mimeType = file.type === 'image/png' && file.size < 1.5 * 1024 * 1024 ? 'image/png' : 'image/jpeg';
-      const ext = mimeType === 'image/png' ? '.png' : '.jpg';
 
       canvas.toBlob(
         (blob) => {
@@ -399,15 +418,6 @@ export const CATEGORY_FALLBACK_IMAGES: Record<string, string> = {
  */
 export function resolveProductImageUrl(product: Partial<Product> | null | undefined): string {
   if (!product) return DEFAULT_FALLBACK_PRODUCT_IMAGE;
-
-  // Title-specific matching for customer uploads
-  const nameLower = (product.name || '').toLowerCase();
-  if (nameLower.includes('porche') || nameLower.includes('porsche')) {
-    return product.imageUrl || '/uploads/photo_1793190584242_1d5d48806841ba79.jpg';
-  }
-  if (nameLower.includes('ajith')) {
-    return product.imageUrl || '/uploads/photo_1793190646459_b8d5e4b1abafaabe.jpg';
-  }
 
   const rawUrl =
     product.imageUrl ||

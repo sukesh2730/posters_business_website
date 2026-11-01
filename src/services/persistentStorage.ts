@@ -216,30 +216,10 @@ export async function uploadPhotoPersistently(
             contentType,
           };
         }
+      } else {
+        const errData = await serverRes.json().catch(() => ({}));
+        throw new Error(errData.error || `Server returned ${serverRes.status} for photo upload.`);
       }
-
-      // If server returns error, save directly to Firestore collection `media_assets`
-      options?.onProgress?.(70);
-      const docRef = doc(db, 'media_assets', mediaId);
-      await setDoc(docRef, {
-        id: mediaId,
-        fileName,
-        contentType,
-        sizeBytes: compressed.size,
-        data: base64Data,
-        uploadedBy: auth.currentUser?.uid || 'guest',
-        createdAt: new Date().toISOString(),
-      });
-
-      const persistentUrl = `/api/images/${mediaId}`;
-      options?.onProgress?.(100);
-      return {
-        id: mediaId,
-        url: persistentUrl,
-        fileName,
-        sizeBytes: compressed.size,
-        contentType,
-      };
 
     } catch (err: any) {
       lastError = err;

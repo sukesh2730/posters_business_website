@@ -83,10 +83,12 @@ function checkRateLimit(ip: string, limit: number, windowMs: number): { allowed:
   return { allowed: true, retryAfter: 0 };
 }
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 export function createRateLimiter(limit: number, windowMs = 60000, label = 'general') {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    // Skip rate limiting in automated tests
-    if (req.headers['x-test-auth'] || process.env.NODE_ENV === 'test') {
+    // Skip rate limiting ONLY in non-production automated tests
+    if (!isProduction && (req.headers['x-test-auth'] || process.env.NODE_ENV === 'test')) {
       return next();
     }
 
@@ -155,17 +157,20 @@ export const TRUSTED_COUPONS = [
 // Authentication Verification
 // ----------------------------------------------------
 export async function verifyRequestAuth(req: express.Request): Promise<AuthenticatedUser | null> {
-  const testHeader = req.headers['x-test-auth'];
-  const testAuth = Array.isArray(testHeader) ? testHeader[0] : testHeader;
-  if (testAuth) {
-    if (testAuth === 'admin') {
-      return { uid: 'test-admin-uid', email: 'sukeshkavin@gmail.com', emailVerified: true };
-    }
-    if (testAuth === 'unverified-admin') {
-      return { uid: 'test-unverified-admin', email: 'sukeshkavin@gmail.com', emailVerified: false };
-    }
-    if (testAuth === 'customer') {
-      return { uid: 'test-cust-123', email: 'customer@example.com', emailVerified: true };
+  // Test authentication headers are strictly disabled in production environments
+  if (!isProduction) {
+    const testHeader = req.headers['x-test-auth'];
+    const testAuth = Array.isArray(testHeader) ? testHeader[0] : testHeader;
+    if (testAuth) {
+      if (testAuth === 'admin') {
+        return { uid: 'test-admin-uid', email: 'sukeshkavin@gmail.com', emailVerified: true };
+      }
+      if (testAuth === 'unverified-admin') {
+        return { uid: 'test-unverified-admin', email: 'sukeshkavin@gmail.com', emailVerified: false };
+      }
+      if (testAuth === 'customer') {
+        return { uid: 'test-cust-123', email: 'customer@example.com', emailVerified: true };
+      }
     }
   }
 
@@ -258,11 +263,34 @@ function inspectImageBuffer(buf: Buffer): { ext: string; mime: string } {
   throw new Error('Invalid image format. Allowed formats: JPG, PNG, WebP.');
 }
 
+export const DYNAMIC_CATALOG: Record<string, { id: string; name: string; price: number; isActive: boolean }> = {
+  ...TRUSTED_CATALOG,
+  'prod_1793190573300_vsmi': { id: 'prod_1793190573300_vsmi', name: 'PORCHE', price: 349, isActive: true },
+};
+
+// Background sync of Firestore products into authoritative dynamic catalog
+async function syncFirestoreCatalog() {
+  if (!db) return;
+  try {
+    const snap = await getDocs(collection(db, 'products'));
+    snap.forEach((d) => {
+      const data = d.data();
+      DYNAMIC_CATALOG[d.id] = {
+        id: d.id,
+        name: data.name || 'Custom Photo Print',
+        price: typeof data.price === 'number' ? data.price : (Number(data.price) || 349),
+        isActive: data.isActive !== false,
+      };
+    });
+  } catch {}
+}
+syncFirestoreCatalog();
+
 async function saveToPersistentMediaStore(
   fileData: string,
   fileName?: string,
   userUid?: string
-): Promise<{ id: string; url: string; fileName: string; sizeBytes: number; mime: string }> {
+): Promise<{ id: string; url: string; canonicalUrl: string; fileName: string; sizeBytes: number; mime: string }> {
   const matches = fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
   let base64Buffer: Buffer;
   let base64String: string;
@@ -275,9 +303,16 @@ async function saveToPersistentMediaStore(
     base64Buffer = Buffer.from(fileData, 'base64');
   }
 
-  const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
-  if (base64Buffer.length > MAX_SIZE_BYTES) {
-    throw new Error(`File size exceeds 10MB limit (${(base64Buffer.length / (1024 * 1024)).toFixed(2)} MB).`);
+  // Enforce durable storage boundary: Firestore document limit is 1 MiB (1,048,576 bytes).
+  // A 700 KB raw binary expands to ~933 KB Base64. Combined with metadata, this guarantees
+  // the document will safely fit in Firestore without corruption or truncation.
+  const MAX_STORAGE_BYTES = 700 * 1024;
+  if (base64Buffer.length > MAX_STORAGE_BYTES) {
+    throw new Error(`File size (${(base64Buffer.length / 1024).toFixed(1)} KB) exceeds the 700 KB durable storage limit. Please optimize or compress before uploading.`);
+  }
+
+  if (base64String.length > 950000) {
+    throw new Error('Image base64 payload exceeds durable document persistence threshold.');
   }
 
   const meta = inspectImageBuffer(base64Buffer);
@@ -286,7 +321,30 @@ async function saveToPersistentMediaStore(
   const safeDiskName = `${mediaId}${meta.ext}`;
   const cleanFileName = fileName ? path.basename(fileName).slice(0, 100) : safeDiskName;
 
-  // 1. In-memory cache for fast sub-millisecond responses
+  // 1. DURABLE PERSISTENCE FIRST:
+  // An upload must ONLY return success after it has been safely written to durable Firestore storage.
+  // We NEVER return success if the image only exists in RAM, in-memory cache, or ephemeral container disk.
+  if (!db) {
+    throw new Error('Durable database storage is uninitialized. Upload cannot be safely persisted.');
+  }
+
+  try {
+    const docRef = doc(db, 'media_assets', mediaId);
+    await setDoc(docRef, {
+      id: mediaId,
+      fileName: cleanFileName,
+      contentType: meta.mime,
+      sizeBytes: base64Buffer.length,
+      data: base64String,
+      uploadedBy: userUid || 'guest',
+      createdAt: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    logSecurityEvent('MEDIA_STORAGE_PERSISTENCE_FAILED', { mediaId, error: e.message });
+    throw new Error(`Failed to save image to durable storage: ${e.message}`);
+  }
+
+  // 2. In-memory cache for fast sub-millisecond responses
   mediaMemoryCache.set(mediaId, {
     buffer: base64Buffer,
     mime: meta.mime,
@@ -294,7 +352,7 @@ async function saveToPersistentMediaStore(
     sizeBytes: base64Buffer.length,
   });
 
-  // 2. Local disk cache for filesystem acceleration
+  // 3. Local disk cache for filesystem acceleration (non-authoritative)
   try {
     fs.writeFileSync(path.join(uploadsDir, safeDiskName), base64Buffer);
     const distUploads = path.resolve(process.cwd(), 'dist', 'uploads');
@@ -303,30 +361,10 @@ async function saveToPersistentMediaStore(
     }
   } catch {}
 
-  // 3. PERSISTENT STORAGE IN FIRESTORE:
-  // Survives Cloud Run container recycling, scale-to-zero, and redeployments!
-  if (db && base64String.length <= 880000) {
-    try {
-      const docRef = doc(db, 'media_assets', mediaId);
-      await setDoc(docRef, {
-        id: mediaId,
-        fileName: cleanFileName,
-        contentType: meta.mime,
-        sizeBytes: base64Buffer.length,
-        data: base64String,
-        uploadedBy: userUid || 'guest',
-        createdAt: new Date().toISOString(),
-      });
-    } catch (e: any) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('Notice: Firestore media backup save:', e.message);
-      }
-    }
-  }
-
   return {
     id: mediaId,
     url: `/uploads/${safeDiskName}`,
+    canonicalUrl: `/api/images/${mediaId}`,
     fileName: cleanFileName,
     sizeBytes: base64Buffer.length,
     mime: meta.mime,
@@ -377,23 +415,18 @@ export function calculateAuthoritativeTotals(items: any[], couponCode?: string) 
     }
 
     const productId = String(item.productId || '');
-    const catalogProduct = TRUSTED_CATALOG[productId];
+    const catalogProduct = TRUSTED_CATALOG[productId] || DYNAMIC_CATALOG[productId];
 
-    let unitPriceRupees = 349;
-    let productName = 'Custom Photo Print';
-
-    if (catalogProduct) {
-      if (catalogProduct.isActive === false) {
-        throw new Error(`Product "${catalogProduct.name}" is currently discontinued or out of stock.`);
-      }
-      unitPriceRupees = catalogProduct.price;
-      productName = catalogProduct.name;
-    } else if (typeof item.unitPrice === 'number' && item.unitPrice > 0) {
-      unitPriceRupees = Math.round(item.unitPrice);
-      if (typeof item.productName === 'string' && item.productName.trim()) {
-        productName = item.productName.trim();
-      }
+    if (!catalogProduct) {
+      throw new Error(`Product "${productId}" was not found in the verified store catalog.`);
     }
+
+    if (catalogProduct.isActive === false) {
+      throw new Error(`Product "${catalogProduct.name}" is currently discontinued or out of stock.`);
+    }
+
+    const unitPriceRupees = catalogProduct.price;
+    const productName = catalogProduct.name;
 
     const qty = parseInt(item.quantity, 10);
     if (isNaN(qty) || qty < 1 || qty > 100) {

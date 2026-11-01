@@ -66,8 +66,8 @@ service cloud.firestore {
         && data.id is string && data.id.size() > 0 && data.id.size() <= 128
         && data.fileName is string && data.fileName.size() <= 150
         && data.contentType is string && data.contentType.size() <= 50
-        && data.sizeBytes is number && data.sizeBytes > 0 && data.sizeBytes <= 10485760
-        && data.data is string && data.data.size() > 0 && data.data.size() <= 900000;
+        && data.sizeBytes is number && data.sizeBytes > 0 && data.sizeBytes <= 716800
+        && data.data is string && data.data.size() > 0 && data.data.size() <= 950000;
     }
 
     // Products catalog: Public read, Admin write
