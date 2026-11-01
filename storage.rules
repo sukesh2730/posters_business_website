@@ -1,0 +1,61 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admin authorization requires verified email or admin custom claim
+    function isOwnerAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "sukeshkavin@gmail.com" && request.auth.token.email_verified == true) ||
+        request.auth.token.admin == true
+      );
+    }
+
+    // Validate image MIME type and 10MB maximum file size
+    function isAllowedImage() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|webp|heic)')
+        && request.resource.size <= 10 * 1024 * 1024;
+    }
+
+    // Default deny all access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Public catalog product imagery: Public read, Admin write
+    match /products/{fileName} {
+      allow read: if true;
+      allow write: if isOwnerAdmin() && isAllowedImage();
+    }
+
+    // Public catalog collection banners: Public read, Admin write
+    match /collections/{fileName} {
+      allow read: if true;
+      allow write: if isOwnerAdmin() && isAllowedImage();
+    }
+
+    // Customer personal photo uploads for custom prints:
+    // Path-isolated per authenticated user UID.
+    // Read: authenticated owner or store admin.
+    // Create: authenticated owner, valid image format and size.
+    // Prevent arbitrary overwrites (update: false).
+    match /customer_uploads/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isOwnerAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId && isAllowedImage();
+      allow update: if false;
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isOwnerAdmin());
+    }
+
+    // Quickview modal personal uploads:
+    match /quickview_uploads/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isOwnerAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId && isAllowedImage();
+      allow update: if false;
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isOwnerAdmin());
+    }
+  }
+}

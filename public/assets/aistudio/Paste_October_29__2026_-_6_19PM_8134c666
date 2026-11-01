@@ -1,0 +1,1467 @@
+OMPLETE WEBSITE AUDIT, VISUAL INSPECTION & END-TO-END VERIFICATION
+
+ROLE
+
+Act as a senior full-stack engineer, QA automation engineer, UI/UX designer, accessibility specialist, security reviewer, and e-commerce conversion optimization expert.
+
+Your task is to perform a comprehensive audit of my entire existing e-commerce website.
+
+Do not merely read the code and tell me that everything looks correct. Inspect the actual implementation, run the application, examine the rendered website, execute tests, investigate problems, and provide evidence-based findings.
+
+I want to understand:
+
+Exactly how my website looks.
+
+How every page and feature behaves.
+
+What is working, broken, incomplete, inconsistent, or visually unattractive.
+
+Whether the frontend, backend, Firebase integration, product catalog, and admin dashboard work correctly together.
+
+What should be improved before the website is considered production-ready.
+
+Important: Do not claim that a feature works, a test passed, or a visual inspection was completed unless you have actually verified it.
+
+PART 1 — UNDERSTAND THE EXISTING PROJECT
+
+Start by inspecting the complete project structure.
+
+Identify and review the relevant files, including:
+
+src/App.tsx
+
+src/components/Navbar.tsx
+
+src/pages/HomePage.tsx
+
+src/pages/CatalogPage.tsx
+
+src/pages/AdminPage.tsx
+
+src/pages and all other page components
+
+src/components and reusable UI components
+
+src/services/orderService.ts
+
+src/data/defaultProducts.ts
+
+BulkProductEditor.tsx and related components
+
+server.ts
+
+Firebase configuration and integration code
+
+Firestore security rules
+
+Firebase Storage security rules
+
+Authentication and authorization logic
+
+Routing configuration
+
+CSS, Tailwind configuration, design tokens, and other styling files
+
+Package scripts and dependencies
+
+All existing unit, integration, QA, and end-to-end tests
+
+Discover the actual file locations instead of assuming every file is in the paths listed above.
+
+Inspect the Git working tree and existing changes before modifying anything.
+
+Determine:
+
+The frontend framework and version.
+
+The backend architecture.
+
+The database and image-storage architecture.
+
+The authentication mechanism.
+
+The routing system.
+
+The styling approach.
+
+The current development and production build commands.
+
+Whether the application uses mock data, real data, or a mixture of both.
+
+Whether any important features are partially implemented or merely simulated.
+
+Do not expose API keys, credentials, tokens, private customer data, or other secrets in the audit report.
+
+PART 2 — RUN THE APPLICATION AND INSPECT THE REAL WEBSITE
+
+Start the application using the existing project configuration.
+
+Use the appropriate browser or UI automation tools, if available, to inspect the actual rendered pages.
+
+Do not rely exclusively on source code.
+
+If browser access, a live URL, authentication, or another prerequisite is unavailable, clearly identify that limitation and continue with the inspections that are possible.
+
+Visit every accessible route.
+
+At a minimum, inspect:
+
+Homepage.
+
+Main product catalog.
+
+Polaroid Prints section.
+
+Posters section.
+
+Best Sellers section.
+
+New Arrivals section.
+
+Bundles & Sets section.
+
+Product detail pages.
+
+Shopping cart.
+
+Checkout.
+
+My Orders.
+
+Login and registration, if present.
+
+Admin Dashboard.
+
+Bulk Product Editor.
+
+Search results.
+
+Empty states and error pages.
+
+Mobile navigation.
+
+Any additional pages discovered in the project.
+
+Record the URL or route for each page.
+
+For each route, verify:
+
+Does the page load?
+
+Does it render correctly?
+
+Are there console errors?
+
+Are there failed network requests?
+
+Are there missing images?
+
+Are there broken links?
+
+Are loading states handled properly?
+
+Are empty states useful?
+
+Do buttons and links work?
+
+Is the layout consistent with the rest of the website?
+
+Does refreshing the page work?
+
+Does direct navigation to the route work?
+
+Does browser back navigation work?
+
+Use screenshots where the available tools support them.
+
+Capture the homepage, product listings, product details, cart, order pages, admin dashboard, bulk editor, and mobile layouts.
+
+PART 3 — PROVIDE A DETAILED VISUAL DESCRIPTION OF THE WEBSITE
+
+This is one of the most important parts of the audit.
+
+Describe the website's actual appearance based on the rendered pages.
+
+Do not give me a generic description of what an e-commerce website should look like.
+
+A. Overall visual identity
+
+Report:
+
+The apparent brand identity and visual personality.
+
+The design style: minimalist, retro, playful, modern, editorial, scrapbook-inspired, or another style.
+
+The dominant background colors.
+
+The primary and secondary colors.
+
+Accent colors.
+
+Text colors.
+
+Border colors.
+
+Button colors.
+
+Whether the palette is cohesive.
+
+Whether the design suits a Polaroid photography and memory-print business.
+
+Whether the design looks professional, trustworthy, and visually appealing.
+
+Where possible, extract the actual color values from the CSS or rendered elements.
+
+Provide a table of the principal design colors with their HEX values and where they are used.
+
+Do not invent HEX values if they cannot be verified.
+
+B. Header and navigation
+
+Inspect the entire header, including:
+
+Brand logo and brand name.
+
+Search bar.
+
+Account controls.
+
+Cart icon and item count.
+
+Main navigation.
+
+Secondary navigation bar.
+
+Active route highlights.
+
+Best Seller, New, or Save ₹ badges.
+
+Sticky-header behavior.
+
+Header spacing and alignment.
+
+Mobile hamburger menu.
+
+Mobile drawer behavior.
+
+Describe the actual arrangement, spacing, typography, iconography, colors, and visual hierarchy.
+
+Identify anything that looks crowded, duplicated, misaligned, or confusing.
+
+C. Homepage
+
+Inspect the homepage from top to bottom.
+
+Describe every visible section in its actual order.
+
+Include:
+
+Announcement bar, if present.
+
+Header and secondary navigation.
+
+Hero section.
+
+Hero image or promotional banner.
+
+Main heading and supporting text.
+
+Calls to action.
+
+Category cards.
+
+Seven-section discovery directory.
+
+Featured Prints & Instant Cart showcase.
+
+Product grids.
+
+Bestseller and New Arrival sections.
+
+Promotional bundles.
+
+Trust indicators.
+
+Reviews and testimonials.
+
+Newsletter section.
+
+Footer.
+
+Only report sections that actually exist. Explicitly identify missing or incomplete sections.
+
+For every major section, describe:
+
+Its position on the page.
+
+Its approximate dimensions and proportions.
+
+Its background color.
+
+Its typography.
+
+Its images and illustrations.
+
+Its layout and alignment.
+
+Its spacing.
+
+Its interactive elements.
+
+Its visual strengths.
+
+Its visual weaknesses.
+
+Recommended improvements.
+
+Pay particular attention to the first screen visible without scrolling. Explain whether a new visitor can quickly understand what the store sells and how to purchase products.
+
+D. Product cards
+
+Inspect several actual product cards.
+
+Evaluate:
+
+Image dimensions and aspect ratios.
+
+Image cropping.
+
+Image quality.
+
+Border radius.
+
+Borders and shadows.
+
+Product title.
+
+Price and original price.
+
+Discount presentation.
+
+Tags and category labels.
+
+Bestseller and New Arrival badges.
+
+Add to Cart button.
+
+Quick-view controls.
+
+Hover animations.
+
+Loading placeholders.
+
+Broken-image fallbacks.
+
+Alignment and spacing.
+
+Check whether all product cards follow a consistent design system.
+
+Describe what a typical product card looks like and identify any inconsistencies between different catalog sections.
+
+E. Product detail pages
+
+Inspect the actual product detail interface.
+
+Check:
+
+Main image and thumbnail gallery.
+
+Product title and description.
+
+Price and discount.
+
+Available variants.
+
+Quantity selector.
+
+Stock status.
+
+Add to Cart button.
+
+Product specifications.
+
+Delivery information.
+
+Reviews.
+
+Related products.
+
+Mobile image layout.
+
+Error and loading states.
+
+Explain whether customers can understand the product and purchase it without confusion.
+
+F. Cart and checkout
+
+Describe the visual layout of the cart and checkout pages.
+
+Inspect:
+
+Product thumbnails.
+
+Product quantities.
+
+Price calculations.
+
+Subtotals.
+
+Discounts.
+
+Shipping fees.
+
+Final totals.
+
+Remove-item controls.
+
+Checkout actions.
+
+Form validation.
+
+Payment instructions.
+
+Success and failure messages.
+
+Verify calculations using actual test data.
+
+Do not complete real purchases or initiate real payments during testing.
+
+G. My Orders
+
+Inspect the customer order interface.
+
+Describe:
+
+Order cards or tables.
+
+Status badges.
+
+Order dates.
+
+Product summaries.
+
+Tracking details.
+
+Payment status.
+
+Empty states.
+
+Mobile layout.
+
+Verify that users can access only their own order information.
+
+H. Admin Dashboard and Bulk Product Editor
+
+Describe the admin interface in detail.
+
+Inspect:
+
+Dashboard layout.
+
+Navigation and tabs.
+
+Product inventory table or gallery.
+
+Image previews.
+
+Multi-file drag-and-drop zone.
+
+Upload progress indicators.
+
+File error messages.
+
+Collection selectors.
+
+Price inputs.
+
+Tag inputs and tag chips.
+
+Product selection checkboxes.
+
+Select All / Deselect All.
+
+Bulk actions.
+
+Save and publish buttons.
+
+Confirmation dialogs.
+
+Success and failure notifications.
+
+Verify that the admin interface is visually consistent and usable when managing many products.
+
+Check whether the page becomes cluttered when dozens of products are displayed.
+
+Do not expose administrative information or modify production products without authorization.
+
+I. Footer
+
+Inspect:
+
+Logo.
+
+Navigation links.
+
+Contact information.
+
+Social media links.
+
+Policy links.
+
+Payment information.
+
+Copyright text.
+
+Spacing and alignment.
+
+Mobile behavior.
+
+Identify missing, broken, or placeholder content.
+
+PART 4 — RESPONSIVE DESIGN AND MOBILE VISUAL AUDIT
+
+Inspect the website at these viewport sizes where browser tools allow:
+
+Mobile: 320 × 700.
+
+Mobile: 375 × 812.
+
+Mobile: 390 × 844.
+
+Tablet: 768 × 1024.
+
+Laptop: 1366 × 768.
+
+Desktop: 1440 × 900.
+
+Wide desktop: 1920 × 1080.
+
+These are CSS viewport dimensions, not physical device resolutions.
+
+At every viewport, inspect:
+
+Horizontal overflow.
+
+Navigation wrapping.
+
+Search-bar behavior.
+
+Product-grid columns.
+
+Card widths.
+
+Image cropping.
+
+Font sizes.
+
+Button sizes.
+
+Tap targets.
+
+Section spacing.
+
+Header height.
+
+Dialog and drawer behavior.
+
+Footer stacking.
+
+Fixed or sticky elements.
+
+Floating cart or checkout controls.
+
+Check whether product grids adapt sensibly to smaller screens.
+
+Identify elements that are too small, too large, overlapping, clipped, or difficult to interact with.
+
+Provide a responsive layout table showing which problems occur at which viewport sizes.
+
+PART 5 — TEST ALL SEVEN CORE STORE SECTIONS
+
+The store should support these seven core sections:
+
+Polaroid Prints.
+
+Posters.
+
+Best Sellers.
+
+New Arrivals.
+
+Bundles & Sets.
+
+My Orders.
+
+Admin Dashboard.
+
+Verify each section in every applicable navigation location:
+
+Secondary navigation bar.
+
+Mobile menu.
+
+Homepage discovery directory.
+
+Catalog filter pills.
+
+Account or user dropdown, where applicable.
+
+For each section, verify:
+
+Correct destination route.
+
+Correct active navigation state.
+
+Correct products.
+
+Correct filtering behavior.
+
+Correct title and description.
+
+Correct banner, where applicable.
+
+Correct product count.
+
+Correct mobile behavior.
+
+Correct empty state.
+
+Check for duplicate navigation links and incorrect route mappings.
+
+Verify that Best Sellers and New Arrivals use appropriate product data rather than misleading hard-coded badges.
+
+Verify that bundles represent real combinations and that their prices are calculated correctly.
+
+PART 6 — PRODUCT CATALOG, FIRESTORE AND SYNCHRONIZATION
+
+Audit the complete product lifecycle.
+
+The catalog should combine default products with custom products stored in Firestore without accidentally replacing either group.
+
+Inspect the existing implementation of:
+
+getProductsCatalog().
+
+Product merging.
+
+Stable product IDs.
+
+Timestamp handling.
+
+Sorting.
+
+Firestore onSnapshot.
+
+Catalog update callbacks.
+
+Admin publish actions.
+
+Product update actions.
+
+Product deletion.
+
+Product activation and deactivation.
+
+Homepage showcase prioritization.
+
+Test the following scenarios:
+
+Scenario 1: New product
+
+Create a test product named E2E TEST POLAROID.
+
+Verify that it is saved, appears in the catalog, and appears in the correct section.
+
+Scenario 2: Catalog persistence
+
+Refresh the storefront and revisit the page.
+
+Verify that the product still exists and that default products have not disappeared.
+
+Scenario 3: Sorting
+
+Verify that recently created products are ordered according to the intended sorting rule.
+
+Check timestamp formats, missing timestamps, and ties.
+
+Do not assume that every new product must appear first in every section. Featured products, bundles, and other curated sections may have their own legitimate sorting rules.
+
+Scenario 4: Editing
+
+Change the test product's price, title, and tags.
+
+Verify that the updated data appears wherever the product is displayed.
+
+Scenario 5: Deletion
+
+Delete or deactivate the test product through the supported interface.
+
+Verify that it disappears from the appropriate storefront sections.
+
+Scenario 6: Realtime updates
+
+Open the storefront and admin dashboard in separate sessions.
+
+Make a change in the admin session and verify whether the storefront updates without a manual refresh.
+
+Scenario 7: Duplicate prevention
+
+Check whether repeated synchronization, page refreshes, or repeated publish actions produce duplicate products.
+
+Scenario 8: Network and permission failures
+
+Test recoverable failures where safe.
+
+Verify that the UI displays useful error messages rather than silently losing changes.
+
+Do not delete real products or modify customer orders during testing.
+
+Clean up test records when appropriate and authorized.
+
+PART 7 — BULK IMAGE UPLOAD AND PRODUCT EDITING
+
+Test the bulk upload system with a controlled set of test images.
+
+Include:
+
+JPEG.
+
+PNG.
+
+WebP.
+
+A mix of valid image sizes.
+
+A file larger than the permitted limit.
+
+An unsupported file type.
+
+A corrupted image.
+
+Multiple files with similar names.
+
+Verify the intended limit of 10 MB per image if that remains the current application requirement.
+
+Inspect:
+
+Drag-and-drop behavior.
+
+File selection.
+
+File validation.
+
+Preview generation.
+
+Upload progress.
+
+Firebase Storage upload.
+
+Download URL retrieval.
+
+Error recovery.
+
+Retry behavior.
+
+Duplicate filename handling.
+
+Product data mapping.
+
+Batch selection.
+
+Collection assignment.
+
+Bulk price assignment.
+
+Bulk tag assignment.
+
+Selected-item actions.
+
+Save and publish behavior.
+
+Verify that actions affecting selected products do not unintentionally modify unselected products.
+
+Confirm that an image upload is not incorrectly treated as a successfully saved product.
+
+Test the final product records for the expected fields:
+
+name
+
+slug
+
+category
+
+collectionId
+
+price
+
+originalPrice
+
+tags
+
+imageUrl
+
+aspectRatio
+
+stock
+
+isActive
+
+Inspect any additional fields that the actual Product model requires.
+
+Check whether product image URLs remain valid after a page refresh, application restart, and production deployment.
+
+Do not assume that writing to public/uploads or dist/uploads guarantees persistent image storage on every hosting platform.
+
+PART 8 — SEARCH, FILTERS, CART AND CHECKOUT
+
+Test the complete shopping experience.
+
+Search
+
+Search by complete product name.
+
+Search by partial product name.
+
+Search by tags.
+
+Search using different capitalization.
+
+Search for a nonexistent product.
+
+Clear the search.
+
+Test keyboard interaction and mobile search.
+
+Filters
+
+Apply each category filter.
+
+Combine filters where supported.
+
+Clear filters.
+
+Verify result counts.
+
+Verify that filters do not unintentionally hide valid products.
+
+Check the behavior when no products match.
+
+Cart
+
+Add a product.
+
+Add multiple products.
+
+Change quantities.
+
+Remove products.
+
+Verify subtotals.
+
+Refresh the page and inspect cart persistence.
+
+Check out-of-stock products.
+
+Check whether duplicate additions behave as intended.
+
+Checkout
+
+Use a safe test environment and test data.
+
+Verify:
+
+Required form fields.
+
+Invalid input.
+
+Quantity and price calculations.
+
+Discount calculations.
+
+Shipping calculations.
+
+Order creation.
+
+Duplicate submission prevention.
+
+Success and error states.
+
+Order confirmation.
+
+Inventory updates, if implemented.
+
+Do not make real payments, submit real orders, or send real customer communications during automated tests.
+
+If payment functionality is simulated or incomplete, label it clearly in the report.
+
+PART 9 — FIREBASE SECURITY AND CUSTOMER PRIVACY
+
+Review the security of the existing implementation.
+
+Inspect:
+
+Authentication.
+
+Admin role verification.
+
+Firestore security rules.
+
+Firebase Storage security rules.
+
+Product write permissions.
+
+Image upload permissions.
+
+Customer order access.
+
+Payment-related data.
+
+Server-side validation.
+
+Environment variable handling.
+
+Client-exposed secrets.
+
+Authorization on administrative API endpoints.
+
+File type and size validation.
+
+Potential injection risks.
+
+Untrusted HTML rendering.
+
+Sensitive information in logs.
+
+Verify that merely hiding the Admin Dashboard link does not serve as the only access control.
+
+Attempt safe, non-destructive authorization tests in a development or test environment.
+
+Never bypass production security, expose private information, or modify access rules without authorization.
+
+Clearly distinguish between:
+
+Verified vulnerabilities.
+
+Potential risks identified from code.
+
+Checks that could not be performed.
+
+Recommended security improvements.
+
+Do not claim that the application is secure solely because its tests pass.
+
+PART 10 — IMAGE QUALITY AND PRINTING READINESS
+
+Because this store sells Polaroid prints, photostrips, and posters, image quality is especially important.
+
+Inspect:
+
+Original image resolution.
+
+Display dimensions.
+
+Image compression.
+
+Aspect ratios.
+
+object-fit behavior.
+
+Thumbnail generation.
+
+Full-resolution product images.
+
+Loading behavior.
+
+Fallback images.
+
+Image optimization.
+
+Lazy loading.
+
+Layout shifts during loading.
+
+Accessibility text.
+
+Determine whether the website is displaying full-resolution assets or low-resolution thumbnails.
+
+For print-related products, check whether the product information clearly communicates physical dimensions, paper finish, and other relevant specifications when such data is available.
+
+Distinguish between web display quality and actual print quality. A browser screenshot cannot, by itself, verify the quality of a physical print.
+
+Recommend an appropriate image delivery strategy that balances sharp product photography, loading speed, storage costs, and print-resolution requirements.
+
+PART 11 — ACCESSIBILITY AND USABILITY
+
+Evaluate the website against relevant WCAG 2.2 AA principles where applicable.
+
+Check:
+
+Text contrast.
+
+Keyboard navigation.
+
+Focus visibility.
+
+Semantic HTML.
+
+Heading hierarchy.
+
+Form labels.
+
+Accessible validation messages.
+
+Image alternative text.
+
+Button names.
+
+Screen-reader usability.
+
+Dialog focus management.
+
+Reduced-motion support.
+
+Touch target sizes.
+
+Color-only status indicators.
+
+Use automated accessibility tools if available, followed by manual checks for important user flows.
+
+Report each confirmed issue with its location, severity, and recommended fix.
+
+Do not claim full WCAG compliance based only on an automated scan.
+
+PART 12 — PERFORMANCE AND PRODUCTION BUILD
+
+Run the available project scripts and inspect:
+
+Development startup.
+
+Production build.
+
+TypeScript checks.
+
+Linting.
+
+Unit tests.
+
+Integration tests.
+
+End-to-end tests.
+
+Console warnings.
+
+Runtime exceptions.
+
+Network failures.
+
+Large images.
+
+Unnecessary rendering.
+
+Excessive Firestore reads.
+
+Realtime listener cleanup.
+
+Memory leaks.
+
+Missing loading states.
+
+Unnecessary dependencies.
+
+Check whether Firestore listeners are properly unsubscribed when components unmount.
+
+Inspect image loading and page rendering performance.
+
+If browser performance tools are available, record relevant metrics such as:
+
+Largest Contentful Paint (LCP).
+
+Cumulative Layout Shift (CLS).
+
+Interaction to Next Paint (INP), where measurable.
+
+Report the actual results and testing conditions. Do not invent performance scores.
+
+Check that the production build behaves correctly rather than relying exclusively on the development server.
+
+PART 13 — AUTOMATED END-TO-END TESTS
+
+Inspect the existing tests before creating new ones.
+
+Discover the actual test commands and test framework.
+
+Reuse existing tests where possible.
+
+Run relevant existing suites, including any available tests named:
+
+qa-audit.test.ts
+
+e2e-store-verification.test.ts
+
+bulk-editor-verification.test.ts
+
+sections-verification.test.ts
+
+Do not assume that these files exist at the paths previously reported. Locate them first.
+
+Add or improve automated tests only where useful.
+
+Cover the following critical flows:
+
+Homepage loads.
+
+All seven store sections navigate correctly.
+
+Catalog includes default and custom products.
+
+New products appear according to the intended sorting rules.
+
+Product data survives refreshes.
+
+Bulk uploads validate files correctly.
+
+Bulk assignment respects product selection.
+
+Product changes appear in the storefront.
+
+Search and filtering work.
+
+Cart totals are correct.
+
+Checkout validation works.
+
+Orders are saved and displayed securely.
+
+Admin access is restricted.
+
+Broken images have suitable fallbacks.
+
+Mobile navigation works.
+
+Product deletion and deactivation are reflected correctly.
+
+Use deterministic test data and isolate tests from production customer data.
+
+Report the number of tests discovered, executed, passed, failed, skipped, and blocked.
+
+Include failure messages and relevant evidence.
+
+Do not change tests merely to make failures disappear. Fix the underlying issue where possible.
+
+PART 14 — DO NOT DAMAGE THE EXISTING PROJECT
+
+Follow these rules throughout the audit:
+
+Inspect before changing code.
+
+Preserve existing functionality.
+
+Do not rebuild the application from scratch.
+
+Do not replace the existing design without identifying a real problem.
+
+Do not remove products or user data.
+
+Do not overwrite Firebase collections with mock data.
+
+Do not expose credentials.
+
+Do not disable security checks to make tests pass.
+
+Do not use production customer records for testing.
+
+Do not create real purchases or payments.
+
+Do not report unverified work as completed.
+
+Do not make unrelated changes.
+
+Do not modify production data without explicit authorization.
+
+If a bug is found, explain it and propose a targeted fix.
+
+If it is safe and within scope to fix the issue, make the smallest reasonable change, add or update a regression test, and rerun the relevant checks.
+
+If the fix could affect production data, payments, authentication, or other high-risk functionality, report the issue and request approval before making the change.
+
+Record the files modified and explain why each modification was necessary.
+
+PART 15 — FINAL AUDIT REPORT
+
+Produce a detailed, structured report with the following sections.
+
+1. Executive Summary
+
+Include:
+
+Overall application status.
+
+Most important findings.
+
+Critical blockers.
+
+Major strengths.
+
+Whether the website appears ready for production.
+
+The evidence supporting that conclusion.
+
+Use one of these statuses for each major area:
+
+PASS — Verified and working.
+
+FAIL — A problem was reproduced.
+
+PARTIAL — Some functionality works, but verification is incomplete.
+
+BLOCKED — Testing could not proceed.
+
+NOT TESTED — No verification was performed.
+
+2. Complete Website Appearance Report
+
+Describe the actual website in detail.
+
+Include:
+
+Brand identity.
+
+Color palette and verified HEX values.
+
+Typography.
+
+Header and navigation.
+
+Homepage layout.
+
+Hero section.
+
+Category directory.
+
+Product cards.
+
+Catalog pages.
+
+Product details.
+
+Cart.
+
+Checkout.
+
+My Orders.
+
+Admin Dashboard.
+
+Bulk Product Editor.
+
+Footer.
+
+Mobile appearance.
+
+Desktop appearance.
+
+Visual consistency.
+
+Include screenshots or screenshot references where available.
+
+Clearly distinguish between observed facts and design recommendations.
+
+3. Page-by-Page Audit Table
+
+Use this format:
+
+Page or Route
+
+Visual Quality
+
+Functional Status
+
+Mobile Status
+
+Issues
+
+Evidence
+
+Include every discovered page.
+
+4. Visual Bug Register
+
+For every issue, report:
+
+Issue ID.
+
+Page or component.
+
+Exact location.
+
+Description.
+
+Steps to reproduce.
+
+Expected behavior.
+
+Actual behavior.
+
+Severity.
+
+Screenshot or evidence.
+
+Recommended fix.
+
+Use these severity levels:
+
+Critical.
+
+High.
+
+Medium.
+
+Low.
+
+Informational.
+
+5. Functional and Backend Audit
+
+Report the actual results for:
+
+Product catalog merging.
+
+Firestore synchronization.
+
+Product sorting.
+
+Bulk uploads.
+
+Product persistence.
+
+Image storage.
+
+Search and filters.
+
+Cart and checkout.
+
+Orders.
+
+Admin permissions.
+
+Security rules.
+
+Error handling.
+
+6. Test Execution Results
+
+Provide a table:
+
+Test Suite
+
+Discovered
+
+Passed
+
+Failed
+
+Skipped
+
+Blocked
+
+Include build, lint, TypeScript, accessibility, and performance results where available.
+
+7. Security Findings
+
+Separate verified vulnerabilities from potential risks and untested areas.
+
+Explain the practical impact of each finding.
+
+8. Recommended Visual Improvements
+
+Prioritize recommendations that will improve the actual customer experience.
+
+Consider:
+
+Stronger visual hierarchy.
+
+Better spacing.
+
+More consistent product cards.
+
+Improved image cropping.
+
+Clearer pricing.
+
+Better calls to action.
+
+Improved navigation.
+
+More polished mobile layouts.
+
+Better loading and empty states.
+
+Better trust indicators.
+
+More consistent typography and color usage.
+
+Do not recommend changes merely for aesthetic preference. Explain the user benefit of each recommendation.
+
+9. Prioritized Fix Plan
+
+Organize the work into:
+
+P0 — Critical blockers
+
+Security issues, broken purchasing flows, data loss, or major production failures.
+
+P1 — High priority
+
+Major functional failures, incorrect product data, broken navigation, and severe mobile problems.
+
+P2 — Medium priority
+
+Visual inconsistencies, accessibility issues, and performance problems.
+
+P3 — Polish
+
+Minor spacing, animations, typography refinements, and other enhancements.
+
+For each fix, identify:
+
+Relevant file or component.
+
+Required change.
+
+Reason.
+
+Risk.
+
+Regression test.
+
+10. Final Production Readiness Decision
+
+Choose one:
+
+READY FOR PRODUCTION.
+
+READY AFTER MINOR FIXES.
+
+NOT READY FOR PRODUCTION.
+
+UNABLE TO DETERMINE.
+
+Explain the decision based on actual evidence.
+
+List all remaining blockers and the exact next steps needed to resolve them.
+
+FINAL INSTRUCTION
+
+Be thorough, objective, and specific.
+
+I want both a technical audit and a detailed visual description of my actual website.
+
+Inspect the rendered interface, not just the source code.
+
+Test real user flows, not just individual components.
+
+Use evidence for every important conclusion.
+
+If you cannot access a page, database, browser, account, or test environment, state exactly what was unavailable and what remains unverified.
+
+Start by inspecting the project structure and current Git changes. Then run the application, inspect the website visually, execute the available tests, investigate failures, and deliver the complete audit report.

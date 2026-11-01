@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Hardened admin verification requiring verified email or admin custom claim or registered admin record
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "sukeshkavin@gmail.com" && request.auth.token.email_verified == true) ||
+        request.auth.token.admin == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'slug', 'category', 'price', 'stock', 'isActive'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.slug is string && data.slug.size() > 0 && data.slug.size() <= 150
+        && data.category is string && data.category.size() <= 50
+        && data.price is number && data.price >= 0
+        && data.stock is number && data.stock >= 0
+        && data.isActive is bool;
+    }
+
+    // Hardened order schema:
+    // - Enforces caller ownership (userId == auth.uid)
+    // - Locks initial orderStatus to 'pending_confirmation'
+    // - Locks initial paymentStatus to 'pending'
+    // - Locks paymentMethod to 'cod'
+    function isValidOrder(data) {
+      return data.keys().hasAll(['userId', 'userEmail', 'customerName', 'customerPhone', 'items', 'total', 'orderStatus', 'paymentStatus'])
+        && data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid
+        && data.userEmail is string && data.userEmail.size() <= 200
+        && data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100
+        && data.customerPhone is string && data.customerPhone.size() > 0 && data.customerPhone.size() <= 20
+        && data.items is list && data.items.size() > 0 && data.items.size() <= 50
+        && data.total is number && data.total >= 0
+        && data.orderStatus == 'pending_confirmation'
+        && (data.paymentStatus == 'pending' || data.paymentStatus == 'pending_instructions')
+        && (!('paymentMethod' in data) || data.paymentMethod == 'cod');
+    }
+
+    function isValidMediaAsset(data) {
+      return data.keys().hasAll(['id', 'fileName', 'contentType', 'sizeBytes', 'data'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.fileName is string && data.fileName.size() <= 150
+        && data.contentType is string && data.contentType.size() <= 50
+        && data.sizeBytes is number && data.sizeBytes > 0 && data.sizeBytes <= 10485760
+        && data.data is string && data.data.size() > 0 && data.data.size() <= 900000;
+    }
+
+    // Products catalog: Public read, Admin write
+    match /products/{productId} {
+      allow get, list: if true;
+      allow create: if isValidId(productId) && isAdmin() && isValidProduct(incoming());
+      allow update: if isValidId(productId) && isAdmin() && isValidProduct(incoming());
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    // Collections catalog: Public read, Admin write
+    match /collections/{collectionId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(collectionId) && isAdmin();
+    }
+
+    // Orders: Customer can read only their own orders; admin can read and fulfill all orders
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(orderId) && isSignedIn() && isValidOrder(incoming());
+      // Customers cannot alter orders after placement; only authorized admins can update status or delete
+      allow update: if isValidId(orderId) && isAdmin();
+      allow delete: if isValidId(orderId) && isAdmin();
+    }
+
+    // Admin registry: Accessible only to authorized admins
+    match /admins/{adminId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Persistent media assets: Public read by ID, validated upload creation, Admin delete
+    match /media_assets/{assetId} {
+      allow get: if isValidId(assetId);
+      allow list: if isAdmin();
+      allow create: if isValidId(assetId) && isValidMediaAsset(incoming());
+      allow update, delete: if isValidId(assetId) && isAdmin();
+    }
+
+    // Test connection doc for initial boot validation
+    match /test/{docId} {
+      allow get: if true;
+    }
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Catalog of customizable photo products and gifts available on MemoPrint",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 200 },
+        "slug": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "maxLength": 50 },
+        "collectionId": { "type": "string", "maxLength": 50 },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "description": { "type": "string", "maxLength": 2000 },
+        "details": { "type": "string", "maxLength": 3000 },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "badge": { "type": "string", "maxLength": 50 },
+        "imageUrl": { "type": "string", "maxLength": 1000 },
+        "aspectRatio": { "type": "string", "maxLength": 20 },
+        "minPhotos": { "type": "number" },
+        "maxPhotos": { "type": "number" },
+        "stock": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "isFeatured": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["name", "slug", "category", "price", "stock", "isActive"]
+    },
+    "Collection": {
+      "title": "Collection",
+      "description": "Themed photo collections like Polaroid Photos, Retro Strips, Posters, and Vintage Aesthetic",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50 },
+        "name": { "type": "string", "maxLength": 100 },
+        "slug": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "coverImage": { "type": "string", "maxLength": 1000 },
+        "designCount": { "type": "number" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["id", "name", "slug", "coverImage"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase orders with customized photo items and shipping information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "orderNumber": { "type": "string", "maxLength": 50 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 200 },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerPhone": { "type": "string", "maxLength": 20 },
+        "shippingAddress": { "type": "object" },
+        "items": { "type": "array" },
+        "itemsCount": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "shippingCharges": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 10 },
+        "paymentStatus": { "type": "string", "maxLength": 30 },
+        "paymentMethod": { "type": "string", "maxLength": 50 },
+        "orderStatus": { "type": "string", "maxLength": 30 },
+        "trackingNumber": { "type": "string", "maxLength": 100 },
+        "trackingCourier": { "type": "string", "maxLength": 50 },
+        "paymentInstructionsSent": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["userId", "userEmail", "customerName", "customerPhone", "items", "total", "orderStatus", "paymentStatus"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized administrators record for RBAC",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["email", "role"]
+    },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Persistent binary and base64 photo assets for customer uploads and product catalog images",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "fileName": { "type": "string", "maxLength": 150 },
+        "contentType": { "type": "string", "maxLength": 50 },
+        "sizeBytes": { "type": "number" },
+        "data": { "type": "string", "maxLength": 850000 },
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "fileName", "contentType", "sizeBytes", "data"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Public catalog of MemoPrint products; readable by all, editable by authorized admins."
+    },
+    "/collections/{collectionId}": {
+      "schema": "Collection",
+      "description": "Store collections like Polaroids, Strips, Posters, Gifts; readable by all, editable by authorized admins."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders; readable by owner and admins; created by authenticated customers; status updated by admin."
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Admin registry allowing authorized staff to manage products and orders."
+    },
+    "/media_assets/{assetId}": {
+      "schema": "MediaAsset",
+      "description": "Persistent cloud image storage in Firestore for customer prints and catalog products."
+    }
+  }
+}
