@@ -16,17 +16,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onQuickView,
 }) => {
   const { addItem } = useCart();
-  const [justAdded, setJustAdded] = useState(false);
+  const [justAdded, setJustAdded] = useState<boolean>(false);
   const resolvedSrc = resolveProductImageUrl(product);
   const [currentImageSrc, setCurrentImageSrc] = useState<string>(resolvedSrc);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
 
   useEffect(() => {
     setCurrentImageSrc(resolveProductImageUrl(product));
+    setIsLoaded(false);
   }, [product.imageUrl, (product as any).image, product.id]);
 
   const handleImageError = () => {
     console.warn(`[ProductCard] Image failed to load for "${product.name}" (ID: ${product.id}). Attempted URL: "${currentImageSrc}". Falling back to default placeholder.`);
     setCurrentImageSrc(DEFAULT_FALLBACK_PRODUCT_IMAGE);
+    setIsLoaded(true);
   };
 
   // Determine aspect ratio class for Pinterest masonry feel
@@ -69,13 +72,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     >
       <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-stone-100 shadow-xs hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 border border-stone-200/70">
         {/* Prominent Image */}
-        <div className={`w-full overflow-hidden ${getAspectClass()} relative`}>
+        <div className={`w-full overflow-hidden ${getAspectClass()} relative bg-stone-200`}>
+          {!isLoaded && (
+            <div className="absolute inset-0 bg-gradient-to-r from-stone-200 via-stone-100 to-stone-200 animate-pulse pointer-events-none" />
+          )}
           <img
             src={currentImageSrc}
             alt={product.name}
             loading="lazy"
+            onLoad={() => setIsLoaded(true)}
             onError={handleImageError}
-            className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+            className={`w-full h-full object-cover transition-all duration-500 ease-out group-hover:scale-105 ${
+              isLoaded ? 'opacity-100' : 'opacity-0'
+            }`}
           />
 
           {/* Dark gradient on hover */}

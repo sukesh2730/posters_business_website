@@ -48,9 +48,14 @@ service cloud.firestore {
     // - Locks initial orderStatus to 'pending_confirmation'
     // - Locks initial paymentStatus to 'pending'
     // - Locks paymentMethod to 'cod'
+    // Hardened order schema:
+    // - Enforces caller ownership (userId == auth.uid when signed in)
+    // - Locks initial orderStatus to 'pending_confirmation'
+    // - Locks initial paymentStatus to 'pending'
+    // - Locks paymentMethod to 'cod'
     function isValidOrder(data) {
       return data.keys().hasAll(['userId', 'userEmail', 'customerName', 'customerPhone', 'items', 'total', 'orderStatus', 'paymentStatus'])
-        && data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid
+        && data.userId is string && data.userId.size() <= 128 && (!isSignedIn() || data.userId == request.auth.uid)
         && data.userEmail is string && data.userEmail.size() <= 200
         && data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100
         && data.customerPhone is string && data.customerPhone.size() > 0 && data.customerPhone.size() <= 20
@@ -67,7 +72,9 @@ service cloud.firestore {
         && data.fileName is string && data.fileName.size() <= 150
         && data.contentType is string && data.contentType.size() <= 50
         && data.sizeBytes is number && data.sizeBytes > 0 && data.sizeBytes <= 716800
-        && data.data is string && data.data.size() > 0 && data.data.size() <= 950000;
+        && data.data is string && data.data.size() > 0 && data.data.size() <= 950000
+        && (!('visibility' in data) || data.visibility in ['public', 'private'])
+        && (!isSignedIn() || isAdmin() || data.uploadedBy == request.auth.uid);
     }
 
     // Products catalog: Public read, Admin write
@@ -88,7 +95,7 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isValidId(orderId) && isSignedIn() && isValidOrder(incoming());
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
       // Customers cannot alter orders after placement; only authorized admins can update status or delete
       allow update: if isValidId(orderId) && isAdmin();
       allow delete: if isValidId(orderId) && isAdmin();
@@ -100,12 +107,26 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // Persistent media assets: Public read by ID, validated upload creation, Admin delete
+    function isMediaOwner(data) {
+      return isSignedIn() && (data.uploadedBy == request.auth.uid || isAdmin());
+    }
+
+    // Persistent media assets:
+    // - Public catalog media: can be read by anyone.
+    // - Private customer uploads: can ONLY be read by owner or admin.
+    // - Listing media is strictly restricted to administrator.
+    // - Users cannot overwrite media (immutability).
+    // - Only owner or admin can delete.
     match /media_assets/{assetId} {
-      allow get: if isValidId(assetId);
+      allow get: if isValidId(assetId) && (
+        resource.data.visibility == 'public' ||
+        isMediaOwner(resource.data)
+      );
       allow list: if isAdmin();
-      allow create: if isValidId(assetId) && isValidMediaAsset(incoming());
-      allow update, delete: if isValidId(assetId) && isAdmin();
+      allow create: if isValidId(assetId)
+        && isValidMediaAsset(incoming());
+      allow update: if false;
+      allow delete: if isValidId(assetId) && (isAdmin() || (isSignedIn() && existing().uploadedBy == request.auth.uid));
     }
 
     // Test connection doc for initial boot validation

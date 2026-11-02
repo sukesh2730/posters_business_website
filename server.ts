@@ -55,8 +55,11 @@ interface CachedMedia {
   mime: string;
   fileName: string;
   sizeBytes: number;
+  visibility: 'public' | 'private';
+  uploadedBy: string;
 }
 const mediaMemoryCache = new Map<string, CachedMedia>();
+const mediaHashCache = new Map<string, string>();
 
 // ----------------------------------------------------
 // Sliding-Window In-Memory Rate Limiter
@@ -263,12 +266,42 @@ function inspectImageBuffer(buf: Buffer): { ext: string; mime: string } {
   throw new Error('Invalid image format. Allowed formats: JPG, PNG, WebP.');
 }
 
-export const DYNAMIC_CATALOG: Record<string, { id: string; name: string; price: number; isActive: boolean }> = {
-  ...TRUSTED_CATALOG,
-  'prod_1793190573300_vsmi': { id: 'prod_1793190573300_vsmi', name: 'PORCHE', price: 349, isActive: true },
-};
+export const DYNAMIC_CATALOG: Record<string, { id: string; name: string; price: number; isActive: boolean }> = {};
 
-// Background sync of Firestore products into authoritative dynamic catalog
+export async function resolveCatalogProduct(productId: string): Promise<{ id: string; name: string; price: number; isActive: boolean } | null> {
+  const cleanId = String(productId || '').trim();
+  if (!cleanId) return null;
+
+  if (TRUSTED_CATALOG[cleanId]) {
+    return TRUSTED_CATALOG[cleanId];
+  }
+  if (DYNAMIC_CATALOG[cleanId]) {
+    return DYNAMIC_CATALOG[cleanId];
+  }
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'products', cleanId));
+      if (snap.exists()) {
+        const data = snap.data();
+        const resolved = {
+          id: snap.id,
+          name: data.name || 'Custom Photo Print',
+          price: typeof data.price === 'number' ? data.price : (Number(data.price) || 349),
+          isActive: data.isActive !== false,
+        };
+        DYNAMIC_CATALOG[cleanId] = resolved;
+        return resolved;
+      }
+    } catch (err: any) {
+      if (!isProduction) {
+        console.warn(`Catalog lookup error for product ${cleanId}:`, err.message);
+      }
+    }
+  }
+  return null;
+}
+
+// Background sync of Firestore products into dynamic catalog cache
 async function syncFirestoreCatalog() {
   if (!db) return;
   try {
@@ -289,8 +322,19 @@ syncFirestoreCatalog();
 async function saveToPersistentMediaStore(
   fileData: string,
   fileName?: string,
-  userUid?: string
-): Promise<{ id: string; url: string; canonicalUrl: string; fileName: string; sizeBytes: number; mime: string }> {
+  userUid?: string,
+  visibility: 'public' | 'private' = 'public',
+  clientHash?: string
+): Promise<{ 
+  id: string; 
+  url: string; 
+  canonicalUrl: string; 
+  fileName: string; 
+  sizeBytes: number; 
+  mime: string; 
+  visibility: 'public' | 'private';
+  isDuplicate?: boolean;
+}> {
   const matches = fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
   let base64Buffer: Buffer;
   let base64String: string;
@@ -316,6 +360,28 @@ async function saveToPersistentMediaStore(
   }
 
   const meta = inspectImageBuffer(base64Buffer);
+
+  // Deduplication check: compute SHA-256 fingerprint
+  const computedHash = clientHash || crypto.createHash('sha256').update(base64Buffer).digest('hex');
+  const dedupKey = visibility === 'public' ? `public_${computedHash}` : `${userUid || 'guest'}_${computedHash}`;
+
+  if (mediaHashCache.has(dedupKey)) {
+    const existingId = mediaHashCache.get(dedupKey)!;
+    const cached = mediaMemoryCache.get(existingId);
+    if (cached) {
+      return {
+        id: existingId,
+        url: `/uploads/${existingId}${meta.ext}`,
+        canonicalUrl: `/api/images/${existingId}`,
+        fileName: cached.fileName,
+        sizeBytes: cached.sizeBytes,
+        mime: cached.mime,
+        visibility: cached.visibility,
+        isDuplicate: true,
+      };
+    }
+  }
+
   const safeRandom = crypto.randomBytes(8).toString('hex');
   const mediaId = `img_${Date.now()}_${safeRandom}`;
   const safeDiskName = `${mediaId}${meta.ext}`;
@@ -336,7 +402,9 @@ async function saveToPersistentMediaStore(
       contentType: meta.mime,
       sizeBytes: base64Buffer.length,
       data: base64String,
+      hash: computedHash,
       uploadedBy: userUid || 'guest',
+      visibility,
       createdAt: new Date().toISOString(),
     });
   } catch (e: any) {
@@ -350,7 +418,10 @@ async function saveToPersistentMediaStore(
     mime: meta.mime,
     fileName: cleanFileName,
     sizeBytes: base64Buffer.length,
+    visibility,
+    uploadedBy: userUid || 'guest',
   });
+  mediaHashCache.set(dedupKey, mediaId);
 
   // 3. Local disk cache for filesystem acceleration (non-authoritative)
   try {
@@ -368,6 +439,8 @@ async function saveToPersistentMediaStore(
     fileName: cleanFileName,
     sizeBytes: base64Buffer.length,
     mime: meta.mime,
+    visibility,
+    isDuplicate: false,
   };
 }
 
@@ -482,22 +555,43 @@ export function calculateAuthoritativeTotals(items: any[], couponCode?: string) 
   }
 
   // 18% GST (SAC 9989 Printing Services) itemized calculation
-  const taxableBasePaise = Math.max(0, subtotalPaise - discountPaise);
-  const gstPaise = Math.round(taxableBasePaise * 0.18);
-  const totalPaise = Math.max(0, subtotalPaise + shippingChargesPaise - discountPaise);
+  // Business Model: Option B - GST INCLUSIVE
+  // Customer catalog prices include 18% GST.
+  // Formula:
+  // inclusiveGoodsPaise = max(0, subtotalPaise - discountPaise)
+  // taxableAmountPaise = Math.round(inclusiveGoodsPaise / 1.18)
+  // gstPaise = inclusiveGoodsPaise - taxableAmountPaise
+  // totalPaise = inclusiveGoodsPaise + shippingChargesPaise
+  // Mathematical Identity: taxableAmountPaise + gstPaise + shippingChargesPaise === totalPaise
+  const inclusiveGoodsPaise = Math.max(0, subtotalPaise - discountPaise);
+  const taxableAmountPaise = Math.round(inclusiveGoodsPaise / 1.18);
+  const gstPaise = inclusiveGoodsPaise - taxableAmountPaise;
+  const totalPaise = inclusiveGoodsPaise + shippingChargesPaise;
+
+  const total = Math.round(totalPaise / 100);
+  const shippingCharges = Math.round(shippingChargesPaise / 100);
+  const subtotal = Math.round(subtotalPaise / 100);
+  const discount = Math.round(discountPaise / 100);
+  const taxableAmount = Math.round(taxableAmountPaise / 100);
+  // Guarantee strict mathematical identity: taxableAmount + gst + shippingCharges === total
+  const gst = total - shippingCharges - taxableAmount;
 
   return {
     valid: true,
-    subtotal: Math.round(subtotalPaise / 100),
+    subtotal,
     subtotalPaise,
-    gst: Math.round(gstPaise / 100),
+    taxableAmount,
+    taxableAmountPaise,
+    gst,
     gstPaise,
-    shippingCharges: Math.round(shippingChargesPaise / 100),
+    gstRate: 0.18,
+    gstModel: 'inclusive',
+    shippingCharges,
     shippingChargesPaise,
-    discount: Math.round(discountPaise / 100),
+    discount,
     discountPaise,
     couponCode: appliedCoupon,
-    total: Math.round(totalPaise / 100),
+    total,
     totalPaise,
     currency: 'INR',
     items: validatedItems,
@@ -507,9 +601,16 @@ export function calculateAuthoritativeTotals(items: any[], couponCode?: string) 
 // ----------------------------------------------------
 // 1. Authoritative Order Calculation Endpoint
 // ----------------------------------------------------
-apiRouter.post('/orders/validate', createRateLimiter(40, 60000, 'orders_validate'), (req, res) => {
+apiRouter.post('/orders/validate', createRateLimiter(40, 60000, 'orders_validate'), async (req, res) => {
   try {
     const { items, couponCode } = req.body;
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (item?.productId) {
+          await resolveCatalogProduct(String(item.productId));
+        }
+      }
+    }
     const result = calculateAuthoritativeTotals(items, couponCode);
     return res.json(result);
   } catch (err: any) {
@@ -619,6 +720,20 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       return res.status(400).json({ error: 'Please provide a valid 6-digit Indian PIN code.' });
     }
 
+    // Pre-resolve all products authoritatively from catalog / Firestore
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (item?.productId) {
+          const resolved = await resolveCatalogProduct(String(item.productId));
+          if (!resolved) {
+            return res.status(400).json({
+              error: `Product "${item.productId}" was not found in the verified store catalog.`,
+            });
+          }
+        }
+      }
+    }
+
     // Authoritative Server Calculation of Items and Totals (Integer Paise)
     const calculated = calculateAuthoritativeTotals(items, couponCode);
 
@@ -676,6 +791,10 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       }),
       itemsCount: calculated.items.reduce((sum, it) => sum + it.quantity, 0),
       subtotal: calculated.subtotal,
+      taxableAmount: calculated.taxableAmount,
+      gst: calculated.gst,
+      gstRate: calculated.gstRate,
+      gstModel: calculated.gstModel,
       shippingCharges: calculated.shippingCharges,
       discount: calculated.discount,
       couponCode: calculated.couponCode || undefined,
@@ -735,19 +854,29 @@ apiRouter.post('/upload', createRateLimiter(40, 60000, 'upload'), async (req, re
       return res.status(401).json({ error: 'Authentication required to upload photos.' });
     }
 
-    const { fileData, fileName } = req.body;
+    const { fileData, fileName, isPublic: requestedPublic, hash } = req.body;
     if (!fileData || typeof fileData !== 'string') {
       return res.status(400).json({ error: 'No image data received.' });
     }
 
-    const result = await saveToPersistentMediaStore(fileData, fileName, authUser.uid);
+    // Distinguish public catalog media vs private customer uploads:
+    // Only authorized admins can mark uploaded media as public catalog assets.
+    // Customer uploads are strictly private by default.
+    const isPublic = isAuthorizedAdmin(authUser) && requestedPublic === true;
+    const visibility: 'public' | 'private' = isPublic ? 'public' : 'private';
+
+    const result = await saveToPersistentMediaStore(fileData, fileName, authUser.uid, visibility, hash);
 
     return res.json({
       success: true,
       id: result.id,
       url: result.url,
+      canonicalUrl: result.canonicalUrl,
       fileName: result.fileName,
       sizeBytes: result.sizeBytes,
+      mime: result.mime,
+      visibility: result.visibility,
+      isDuplicate: result.isDuplicate || false,
       uploadedAt: new Date().toISOString(),
     });
   } catch (error: any) {
@@ -782,18 +911,21 @@ apiRouter.post('/upload-bulk', createRateLimiter(20, 60000, 'upload_bulk'), asyn
       return res.status(400).json({ error: 'Bulk upload batch cannot exceed 30 files at once.' });
     }
 
-    const uploadedResults: Array<{ id: string; url: string; fileName: string; sizeBytes: number }> = [];
+    const uploadedResults: Array<{ id: string; url: string; canonicalUrl: string; fileName: string; sizeBytes: number; visibility: string; isDuplicate?: boolean }> = [];
     const errors: string[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       try {
-        const item = await saveToPersistentMediaStore(f.fileData, f.fileName, authUser.uid);
+        const item = await saveToPersistentMediaStore(f.fileData, f.fileName, authUser.uid, 'public', f.hash);
         uploadedResults.push({
           id: item.id,
           url: item.url,
+          canonicalUrl: item.canonicalUrl,
           fileName: item.fileName,
           sizeBytes: item.sizeBytes,
+          visibility: item.visibility,
+          isDuplicate: item.isDuplicate || false,
         });
       } catch (err: any) {
         errors.push(`File ${i + 1}: ${err.message}`);
@@ -850,6 +982,25 @@ apiRouter.get('/admin/orders', async (req, res) => {
   return res.json({ success: true, orders: [] });
 });
 
+// Valid Order & Payment Status State Transitions
+export const VALID_ORDER_STATUSES = ['pending_confirmation', 'confirmed', 'printing', 'shipped', 'delivered', 'cancelled'];
+export const VALID_ORDER_STATUS_TRANSITIONS: Record<string, string[]> = {
+  pending_confirmation: ['confirmed', 'cancelled'],
+  confirmed: ['printing', 'cancelled'],
+  printing: ['shipped', 'cancelled'],
+  shipped: ['delivered'],
+  delivered: [],
+  cancelled: [],
+};
+
+export const VALID_PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded'];
+export const VALID_PAYMENT_STATUS_TRANSITIONS: Record<string, string[]> = {
+  pending: ['paid', 'failed'],
+  paid: ['refunded'],
+  failed: ['pending'],
+  refunded: [],
+};
+
 apiRouter.post('/admin/orders/:id/status', async (req, res) => {
   const authUser = await verifyRequestAuth(req);
   if (!authUser || !isAuthorizedAdmin(authUser)) {
@@ -864,9 +1015,35 @@ apiRouter.post('/admin/orders/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'Order ID is required.' });
   }
 
+  let currentOrder: any = null;
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'orders', id));
+      if (snap.exists()) {
+        currentOrder = snap.data();
+      }
+    } catch {}
+  }
+
   const updates: any = { updatedAt: new Date().toISOString() };
 
   if (status) {
+    if (!VALID_ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ 
+        error: `Invalid order status "${status}". Allowed statuses: ${VALID_ORDER_STATUSES.join(', ')}` 
+      });
+    }
+
+    if (currentOrder) {
+      const currentStatus = currentOrder.orderStatus || 'pending_confirmation';
+      const allowed = VALID_ORDER_STATUS_TRANSITIONS[currentStatus] || [];
+      if (status !== currentStatus && !allowed.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status transition: Cannot transition order from "${currentStatus}" to "${status}". Allowed transitions: ${allowed.length > 0 ? allowed.join(', ') : 'none (order is in final terminal state)'}`,
+        });
+      }
+    }
+
     updates.orderStatus = status;
     // CRITICAL SECURITY ENFORCEMENT:
     // Do NOT automatically mark an order as paid simply because it was placed, confirmed, shipped, or marked delivered!
@@ -879,6 +1056,22 @@ apiRouter.post('/admin/orders/:id/status', async (req, res) => {
 
   // Payment status changes to 'paid' ONLY after authorized admin confirms cash was collected
   if (paymentStatus) {
+    if (!VALID_PAYMENT_STATUSES.includes(paymentStatus)) {
+      return res.status(400).json({ 
+        error: `Invalid payment status "${paymentStatus}". Allowed statuses: ${VALID_PAYMENT_STATUSES.join(', ')}` 
+      });
+    }
+
+    if (currentOrder) {
+      const currentPay = currentOrder.paymentStatus || 'pending';
+      const allowedPay = VALID_PAYMENT_STATUS_TRANSITIONS[currentPay] || [];
+      if (paymentStatus !== currentPay && !allowedPay.includes(paymentStatus)) {
+        return res.status(400).json({
+          error: `Invalid payment transition: Cannot transition payment from "${currentPay}" to "${paymentStatus}". Allowed transitions: ${allowedPay.length > 0 ? allowedPay.join(', ') : 'none (terminal state)'}`,
+        });
+      }
+    }
+
     if (paymentStatus === 'paid') {
       updates.paymentStatus = 'paid';
       updates.paidAt = new Date().toISOString();
@@ -921,99 +1114,140 @@ apiRouter.all('/payments/*', (_req, res) => {
 });
 
 // ----------------------------------------------------
-// 6. Persistent Media Serving: GET /api/images/:id
+// 6. Persistent Media Serving & Access Control
 // ----------------------------------------------------
 apiRouter.get('/images/:id', async (req, res) => {
   const { id } = req.params;
   const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
 
-  // 1. Check in-memory cache (instant sub-millisecond response)
+  let buffer: Buffer | null = null;
+  let mime = 'image/jpeg';
+  let visibility: 'public' | 'private' = 'public';
+  let uploadedBy = '';
+
+  // 1. Check in-memory cache
   const cached = mediaMemoryCache.get(cleanId);
   if (cached) {
-    res.setHeader('Content-Type', cached.mime);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    return res.send(cached.buffer);
-  }
-
-  // 2. Check local disk
-  for (const ext of ['.webp', '.jpg', '.png']) {
-    const filePath = path.join(uploadsDir, `${cleanId}${ext}`);
-    if (fs.existsSync(filePath)) {
-      try {
-        const fileBuf = fs.readFileSync(filePath);
-        const meta = inspectImageBuffer(fileBuf);
-        mediaMemoryCache.set(cleanId, {
-          buffer: fileBuf,
-          mime: meta.mime,
-          fileName: cleanId,
-          sizeBytes: fileBuf.length,
-        });
-        res.setHeader('Content-Type', meta.mime);
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        return res.send(fileBuf);
-      } catch {}
+    buffer = cached.buffer;
+    mime = cached.mime;
+    visibility = cached.visibility || 'public';
+    uploadedBy = cached.uploadedBy || '';
+  } else {
+    // 2. Check local disk
+    for (const ext of ['.webp', '.jpg', '.png']) {
+      const filePath = path.join(uploadsDir, `${cleanId}${ext}`);
+      if (fs.existsSync(filePath)) {
+        try {
+          const fileBuf = fs.readFileSync(filePath);
+          const meta = inspectImageBuffer(fileBuf);
+          buffer = fileBuf;
+          mime = meta.mime;
+          break;
+        } catch {}
+      }
     }
-  }
 
-  // 3. PERSISTENT FALLBACK: Fetch from Firestore media_assets
-  if (db) {
-    try {
-      const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.data) {
-          const buffer = Buffer.from(data.data, 'base64');
-          const mime = data.contentType || 'image/jpeg';
-          mediaMemoryCache.set(cleanId, {
-            buffer,
-            mime,
-            fileName: data.fileName || cleanId,
-            sizeBytes: buffer.length,
-          });
-          // Cache to disk
-          try {
-            fs.writeFileSync(path.join(uploadsDir, `${cleanId}.jpg`), buffer);
-          } catch {}
-
-          res.setHeader('Content-Type', mime);
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          return res.send(buffer);
+    // 3. PERSISTENT FALLBACK: Fetch from Firestore media_assets
+    if (db) {
+      try {
+        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.data) {
+            buffer = Buffer.from(data.data, 'base64');
+            mime = data.contentType || 'image/jpeg';
+            visibility = data.visibility || 'public';
+            uploadedBy = data.uploadedBy || '';
+            mediaMemoryCache.set(cleanId, {
+              buffer,
+              mime,
+              fileName: data.fileName || cleanId,
+              sizeBytes: buffer.length,
+              visibility,
+              uploadedBy,
+            });
+            // Cache to disk
+            try {
+              fs.writeFileSync(path.join(uploadsDir, `${cleanId}.jpg`), buffer);
+            } catch {}
+          }
+        }
+      } catch (e: any) {
+        if (!isProduction) {
+          console.warn('Firestore image fetch error:', e.message);
         }
       }
-    } catch (e: any) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('Firestore image fetch error:', e.message);
-      }
     }
   }
 
-  return res.status(404).json({ error: 'Image not found.' });
+  if (!buffer) {
+    return res.status(404).json({ error: 'Image not found.' });
+  }
+
+  // Access control on private customer media
+  if (visibility === 'private') {
+    const authUser = await verifyRequestAuth(req);
+    const isOwner = authUser && authUser.uid === uploadedBy;
+    const isAdmin = authUser && isAuthorizedAdmin(authUser);
+    if (!isOwner && !isAdmin) {
+      logSecurityEvent('UNAUTHORIZED_PRIVATE_MEDIA_ACCESS', { mediaId: cleanId, ip: req.ip });
+      return res.status(403).json({ error: 'Forbidden: Private media asset. Access restricted to owner or admin.' });
+    }
+  }
+
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache');
+  return res.send(buffer);
 });
 
 apiRouter.head('/images/:id', async (req, res) => {
   const { id } = req.params;
   const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
 
-  if (mediaMemoryCache.has(cleanId)) {
-    return res.status(200).end();
-  }
+  let visibility: 'public' | 'private' = 'public';
+  let uploadedBy = '';
+  let exists = false;
 
-  for (const ext of ['.webp', '.jpg', '.png']) {
-    if (fs.existsSync(path.join(uploadsDir, `${cleanId}${ext}`))) {
-      return res.status(200).end();
+  if (mediaMemoryCache.has(cleanId)) {
+    const c = mediaMemoryCache.get(cleanId)!;
+    visibility = c.visibility || 'public';
+    uploadedBy = c.uploadedBy || '';
+    exists = true;
+  } else {
+    for (const ext of ['.webp', '.jpg', '.png']) {
+      if (fs.existsSync(path.join(uploadsDir, `${cleanId}${ext}`))) {
+        exists = true;
+        break;
+      }
+    }
+
+    if (db) {
+      try {
+        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
+        if (docSnap.exists()) {
+          const d = docSnap.data();
+          visibility = d.visibility || 'public';
+          uploadedBy = d.uploadedBy || '';
+          exists = true;
+        }
+      } catch {}
     }
   }
 
-  if (db) {
-    try {
-      const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-      if (docSnap.exists()) {
-        return res.status(200).end();
-      }
-    } catch {}
+  if (!exists) {
+    return res.status(404).end();
   }
 
-  return res.status(404).end();
+  if (visibility === 'private') {
+    const authUser = await verifyRequestAuth(req);
+    const isOwner = authUser && authUser.uid === uploadedBy;
+    const isAdmin = authUser && isAuthorizedAdmin(authUser);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).end();
+    }
+  }
+
+  return res.status(200).end();
 });
 
 // ----------------------------------------------------
@@ -1030,10 +1264,44 @@ app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Backward-compatible static /uploads handler with persistent fallback
+// Backward-compatible static /uploads handler with persistent fallback and access control
 app.get('/uploads/:fileName', async (req, res) => {
   const fileName = path.basename(req.params.fileName);
+  const mediaId = fileName.replace(/\.[a-zA-Z0-9]+$/, '');
   
+  // Access control check for private customer media
+  let mediaRecord = mediaMemoryCache.get(mediaId);
+  if (!mediaRecord && db) {
+    const idMatch = fileName.match(/^(img_[a-zA-Z0-9_]+|photo_[a-zA-Z0-9_]+)/);
+    if (idMatch) {
+      try {
+        const docSnap = await getDoc(doc(db, 'media_assets', idMatch[1]));
+        if (docSnap.exists()) {
+          const d = docSnap.data();
+          mediaRecord = {
+            buffer: Buffer.from(d.data || '', 'base64'),
+            mime: d.contentType || 'image/jpeg',
+            fileName: d.fileName || idMatch[1],
+            sizeBytes: d.sizeBytes || 0,
+            visibility: d.visibility || 'public',
+            uploadedBy: d.uploadedBy || '',
+          };
+          mediaMemoryCache.set(idMatch[1], mediaRecord);
+        }
+      } catch {}
+    }
+  }
+
+  if (mediaRecord && mediaRecord.visibility === 'private') {
+    const authUser = await verifyRequestAuth(req);
+    const isOwner = authUser && authUser.uid === mediaRecord.uploadedBy;
+    const isAdmin = authUser && isAuthorizedAdmin(authUser);
+    if (!isOwner && !isAdmin) {
+      logSecurityEvent('UNAUTHORIZED_PRIVATE_UPLOADS_ACCESS', { fileName, ip: req.ip });
+      return res.status(403).json({ error: 'Forbidden: Private media asset. Access restricted to owner or admin.' });
+    }
+  }
+
   // Search in all candidate upload directory locations
   const possiblePaths = [
     path.join(uploadsDir, fileName),
@@ -1047,9 +1315,10 @@ app.get('/uploads/:fileName', async (req, res) => {
     if (fs.existsSync(diskPath)) {
       try {
         const stat = fs.statSync(diskPath);
-        // Ensure we don't serve a 1x1 black pixel test stub if a real image can be found
         if (stat.size > 300) {
-          return res.sendFile(diskPath);
+          const cacheControl = mediaRecord?.visibility === 'private' ? 'private, no-cache' : 'public, max-age=31536000, immutable';
+          res.setHeader('Cache-Control', cacheControl);
+          return res.sendFile(diskPath, { cacheControl: false });
         }
       } catch {}
     }
@@ -1066,7 +1335,7 @@ app.get('/uploads/:fileName', async (req, res) => {
         if (data.data) {
           const buffer = Buffer.from(data.data, 'base64');
           res.setHeader('Content-Type', data.contentType || 'image/jpeg');
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          res.setHeader('Cache-Control', data.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache');
           return res.send(buffer);
         }
       }
@@ -1076,15 +1345,15 @@ app.get('/uploads/:fileName', async (req, res) => {
   // 3. Fallback: If image file exists on disk even if small, serve it as last resort
   for (const diskPath of possiblePaths) {
     if (fs.existsSync(diskPath)) {
-      return res.sendFile(diskPath);
+      const cacheControl = mediaRecord?.visibility === 'private' ? 'private, no-cache' : 'public, max-age=31536000, immutable';
+      res.setHeader('Cache-Control', cacheControl);
+      return res.sendFile(diskPath, { cacheControl: false });
     }
   }
 
   // 4. Return safe 404 rather than next() to avoid Vite/SPA returning 200 text/html for <img> tags
   return res.status(404).type('text/plain').send('Image not found');
 });
-
-app.use('/uploads', express.static(uploadsDir));
 
 // Mount Backend API
 app.use('/api', apiRouter);
@@ -1132,7 +1401,15 @@ async function startServer() {
   });
 }
 
-if (process.env.NODE_ENV !== 'test') {
+const isMainEntry = Boolean(
+  process.argv[1] &&
+  (process.argv[1].endsWith('/server.ts') ||
+   process.argv[1].endsWith('/server.js') ||
+   process.argv[1] === 'server.ts' ||
+   process.argv[1] === 'server.js')
+);
+
+if (isMainEntry && process.env.NODE_ENV !== 'test') {
   startServer().catch((err) => {
     console.error('Failed to start MemoPrint server:', err);
     process.exit(1);

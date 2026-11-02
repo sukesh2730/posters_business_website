@@ -22,85 +22,22 @@ export async function validateServerOrderTotals(payload: {
   couponCode?: string;
   discount?: number;
 }) {
-  try {
-    const res = await fetch('/api/orders/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items: payload.items,
-        couponCode: payload.couponCode,
-      }),
-    });
+  const baseUrl = typeof window !== 'undefined' ? '' : (process.env.INTERNAL_API_URL || 'http://localhost:3000');
+  const res = await fetch(`${baseUrl}/api/orders/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: payload.items,
+      couponCode: payload.couponCode,
+    }),
+  });
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'Failed to validate order totals.');
-    }
-
-    return await res.json();
-  } catch (err: any) {
-    const isDev = Boolean(typeof import.meta !== 'undefined' && import.meta.env?.DEV) || process.env.NODE_ENV === 'test';
-    if (isDev) {
-      console.warn('Notice: Server validation notice, verifying with local authoritative catalog:', err.message);
-    }
-    
-    // Authoritative fallback using trusted catalog constants only (fail closed on unknown products)
-    let subtotal = 0;
-    const validatedItems = [];
-    const catalogMap = new Map(DEFAULT_PRODUCTS.map((p) => [p.id, p]));
-
-    for (const it of payload.items) {
-      const prod = catalogMap.get(it.productId);
-      if (!prod) {
-        throw new Error(`Product "${it.productId}" was not found in the verified store catalog.`);
-      }
-      const unitPrice = prod.price;
-      const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
-      subtotal += unitPrice * qty;
-      validatedItems.push({
-        ...it,
-        unitPrice,
-        totalPrice: unitPrice * qty,
-      });
-    }
-
-    const shippingCharges = subtotal >= 499 ? 0 : 60;
-    let validatedDiscount = 0;
-    let appliedCoupon = null;
-
-    if (payload.couponCode) {
-      const coupon = AVAILABLE_COUPONS.find((c) => c.code === payload.couponCode?.toUpperCase());
-      if (coupon && subtotal >= coupon.minAmount) {
-        if ('flatDiscount' in coupon && coupon.flatDiscount) {
-          validatedDiscount = coupon.flatDiscount;
-        } else if ('discountPercent' in coupon && coupon.discountPercent) {
-          validatedDiscount = Math.round(subtotal * (coupon.discountPercent / 100));
-        }
-        appliedCoupon = coupon.code;
-      }
-    }
-
-    const taxableBase = Math.max(0, subtotal - validatedDiscount);
-    const gst = Math.round(taxableBase * 0.18);
-    const total = Math.max(0, subtotal + shippingCharges - validatedDiscount);
-
-    return {
-      valid: true,
-      subtotal,
-      subtotalPaise: subtotal * 100,
-      gst,
-      gstPaise: gst * 100,
-      shippingCharges,
-      shippingChargesPaise: shippingCharges * 100,
-      discount: validatedDiscount,
-      discountPaise: validatedDiscount * 100,
-      couponCode: appliedCoupon,
-      total,
-      totalPaise: total * 100,
-      currency: 'INR',
-      items: validatedItems,
-    };
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || 'Failed to validate order totals on server.');
   }
+
+  return await res.json();
 }
 
 /**
@@ -233,7 +170,8 @@ export async function uploadPhotoToFirebaseStorage(
   folder = 'products',
   onProgress?: (progressPercent: number) => void
 ): Promise<string> {
-  const result = await uploadPhotoPersistently(file, { onProgress });
+  const isPublic = folder === 'products' || folder === 'catalog';
+  const result = await uploadPhotoPersistently(file, { onProgress, folder, isPublic });
   return result.url;
 }
 
@@ -242,7 +180,7 @@ export async function uploadCustomPhoto(
   file: File,
   onProgress?: (progressPercent: number) => void
 ): Promise<string> {
-  const result = await uploadPhotoPersistently(file, { onProgress });
+  const result = await uploadPhotoPersistently(file, { onProgress, folder: 'customer_uploads', isPublic: false });
   return result.url;
 }
 
@@ -250,26 +188,29 @@ export async function uploadCustomPhoto(
 export async function bulkUploadCustomPhotos(files: File[]): Promise<Array<{ url: string; fileName: string }>> {
   const idToken = await auth.currentUser?.getIdToken().catch(() => null);
 
-  const compressedFiles = await Promise.all(
-    files.map((file) => compressImageFile(file).catch(() => file))
+  const { optimizeImageForUpload } = await import('../utils/imageOptimization');
+  const { blobToBase64 } = await import('./persistentStorage');
+
+  const optimizedFiles = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const opt = await optimizeImageForUpload(file);
+        return {
+          fileData: opt.dataUri,
+          fileName: file.name,
+          fileType: opt.mimeType,
+          hash: opt.hash,
+        };
+      } catch {
+        const base64Data = await blobToBase64(file);
+        return {
+          fileData: `data:${file.type || 'image/jpeg'};base64,${base64Data}`,
+          fileName: file.name,
+          fileType: file.type || 'image/jpeg',
+        };
+      }
+    })
   );
-
-  const convertedFiles: Array<{ fileData: string; fileName: string; fileType: string }> = [];
-
-  for (const file of compressedFiles) {
-    const base64Data = await new Promise<string>((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result as string);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-
-    convertedFiles.push({
-      fileData: base64Data,
-      fileName: file.name,
-      fileType: file.type,
-    });
-  }
 
   const res = await fetch('/api/upload-bulk', {
     method: 'POST',
@@ -277,7 +218,7 @@ export async function bulkUploadCustomPhotos(files: File[]): Promise<Array<{ url
       'Content-Type': 'application/json',
       ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
     },
-    body: JSON.stringify({ files: convertedFiles }),
+    body: JSON.stringify({ files: optimizedFiles }),
   });
 
   if (!res.ok) {

@@ -66,23 +66,27 @@ async function runFixesVerification() {
     assert(uploadRes.ok, 'Persistent Storage', 'Server accepted valid upload and stored persistently');
     assert(Boolean(uploadData.id), 'Persistent Storage', 'Upload returned persistent mediaId: ' + uploadData.id);
 
-    // Verify GET /api/images/:id
-    const imageGetRes = await fetch(`${BASE_URL}/api/images/${uploadData.id}`);
-    assert(imageGetRes.status === 200, 'Persistent Storage', 'Image served successfully via /api/images/:id');
+    // Verify access control: unauthenticated access to private customer media is rejected with 403
+    const unauthRes = await fetch(`${BASE_URL}/api/images/${uploadData.id}`);
+    assert(unauthRes.status === 403, 'Media Privacy Access Control', 'Unauthenticated request to private customer photo rejected with 403 Forbidden');
+
+    // Verify authorized owner access returns 200
+    const imageGetRes = await fetch(`${BASE_URL}/api/images/${uploadData.id}`, {
+      headers: { 'x-test-auth': 'customer' },
+    });
+    assert(imageGetRes.status === 200, 'Persistent Storage', 'Owner served image successfully via /api/images/:id');
     assert(
       Boolean(imageGetRes.headers.get('content-type')?.includes('image/')),
       'Persistent Storage',
       'Image served with proper binary Content-Type header'
     );
-    assert(
-      Boolean(imageGetRes.headers.get('cache-control')?.includes('immutable')),
-      'Persistent Storage',
-      'Image served with immutable long-term caching header'
-    );
 
-    // Verify HEAD probe
-    const headRes = await fetch(`${BASE_URL}/api/images/${uploadData.id}`, { method: 'HEAD' });
-    assert(headRes.status === 200, 'Persistent Storage', 'HEAD probe returns 200 OK for pre-flight accessibility check');
+    // Verify HEAD probe with owner auth returns 200
+    const headRes = await fetch(`${BASE_URL}/api/images/${uploadData.id}`, {
+      method: 'HEAD',
+      headers: { 'x-test-auth': 'customer' },
+    });
+    assert(headRes.status === 200, 'Persistent Storage', 'HEAD probe returns 200 OK for owner pre-flight check');
   } catch (err: any) {
     assert(false, 'Persistent Storage', 'Upload test failed: ' + err.message);
   }

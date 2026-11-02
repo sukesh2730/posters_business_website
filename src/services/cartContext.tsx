@@ -9,6 +9,8 @@ interface CartContextType {
   updateQuantity: (itemId: string, quantity: number) => void;
   clearCart: () => void;
   subtotal: number;
+  taxableAmount: number;
+  gst: number;
   shippingCharges: number;
   discount: number;
   total: number;
@@ -96,6 +98,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
+  // GST Option B: Catalog prices are GST inclusive (18% SAC 9989 Printing Services)
+  const inclusiveGoods = Math.max(0, subtotal - discount);
+  const taxableAmount = Math.round(inclusiveGoods / 1.18);
+  const gst = inclusiveGoods - taxableAmount;
+
   const total = Math.max(0, subtotal + shippingCharges - discount);
   const totalCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -132,6 +139,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateQuantity,
         clearCart,
         subtotal,
+        taxableAmount,
+        gst,
         shippingCharges,
         discount,
         total,

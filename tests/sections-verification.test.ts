@@ -149,6 +149,7 @@ async function runSectionsTestSuite() {
   if (results.some((r) => !r.passed)) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runSectionsTestSuite().catch((err) => {

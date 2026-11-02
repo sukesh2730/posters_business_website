@@ -32,7 +32,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   onOrderSuccess,
   onOpenAuth,
 }) => {
-  const { items, subtotal, shippingCharges, discount, total, appliedCoupon, clearCart } = useCart();
+  const { items, subtotal, gst, shippingCharges, discount, total, appliedCoupon, clearCart } = useCart();
   const { currentUser } = useAuth();
 
   // Form State
@@ -494,8 +494,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
           {/* Pricing Breakdown */}
           <div className="pt-3 border-t border-slate-100 space-y-2 text-xs text-slate-600">
             <div className="flex justify-between">
-              <span>Subtotal</span>
+              <span>Subtotal (Inclusive of GST)</span>
               <span className="font-semibold text-slate-900">₹{subtotal}</span>
+            </div>
+            <div className="flex justify-between text-[11px] text-slate-400">
+              <span>Estimated GST (18% SAC 9989)</span>
+              <span>₹{gst}</span>
             </div>
             <div className="flex justify-between">
               <span>Shipping Charges</span>

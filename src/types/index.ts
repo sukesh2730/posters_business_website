@@ -139,6 +139,10 @@ export interface Order {
   items: OrderItemSummary[];
   itemsCount: number;
   subtotal: number;
+  taxableAmount?: number;
+  gst?: number;
+  gstRate?: number;
+  gstModel?: 'inclusive' | 'exclusive';
   shippingCharges: number;
   discount: number;
   couponCode?: string;

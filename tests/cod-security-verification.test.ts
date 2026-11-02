@@ -40,8 +40,9 @@ async function runVerification() {
   const singleItem = [{ productId: 'prod-polaroid-classic', quantity: 1 }];
   const singleResult = calculateAuthoritativeTotals(singleItem);
   assert(singleResult.subtotal === 349, 'Pricing Calculation', 'Subtotal for 1 Retro Polaroid is ₹349');
-  assert(singleResult.shippingCharges === 60, 'Shipping Policy', 'Shipping is ₹60 for order < ₹499');
-  assert(singleResult.gst === 63, 'GST Calculation', '18% GST itemized correctly (18% of 349 = ₹63)');
+  assert(singleResult.gst === 53, 'GST Calculation', '18% inclusive GST itemized correctly (349 - round(349/1.18) = ₹53)');
+  assert(singleResult.taxableAmount === 296, 'Taxable Base', 'Taxable base is ₹296 (round(349/1.18))');
+  assert(singleResult.taxableAmount + singleResult.gst + singleResult.shippingCharges === singleResult.total, 'Mathematical Identity', 'Taxable + GST + Shipping strictly equals Total (296 + 53 + 60 = 409)');
   assert(singleResult.total === 409, 'Total Calculation', 'Total is ₹409 (349 + 60 shipping)');
 
   // 1.2 Free Shipping Above ₹499 Threshold

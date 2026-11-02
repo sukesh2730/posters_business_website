@@ -19,6 +19,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     removeItem,
     updateQuantity,
     subtotal,
+    gst,
     shippingCharges,
     discount,
     total,
@@ -242,8 +243,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               {/* Price Breakdown */}
               <div className="space-y-1.5 text-xs text-slate-600 pt-1">
                 <div className="flex justify-between">
-                  <span>Subtotal</span>
+                  <span>Subtotal (Inclusive of GST)</span>
                   <span className="font-medium text-slate-800">₹{subtotal}</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-slate-400">
+                  <span>Estimated GST (18% SAC 9989)</span>
+                  <span>₹{gst}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Standard Shipping (India)</span>

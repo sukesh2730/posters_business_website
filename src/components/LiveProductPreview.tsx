@@ -27,6 +27,12 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
     e.currentTarget.src = defaultProductImg || DEFAULT_FALLBACK_PRODUCT_IMAGE;
   };
 
+  const [isLoaded, setIsLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsLoaded(false);
+  }, [displayPhotos[0]]);
+
   // 1. Polaroid-style preview
   if (product.category === 'polaroids') {
     return (
@@ -34,11 +40,17 @@ export const LiveProductPreview: React.FC<LiveProductPreviewProps> = ({
         <div className="relative bg-white p-3.5 pb-8 pt-3.5 rounded shadow-[0_12px_35px_-8px_rgba(0,0,0,0.18)] max-w-xs w-full transition-transform duration-300 hover:rotate-1">
           {/* Polaroid Photo Frame */}
           <div className="aspect-[4/4.2] w-full bg-slate-100 overflow-hidden rounded-[2px] relative shadow-inner">
+            {!isLoaded && (
+              <div className="absolute inset-0 bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 animate-pulse pointer-events-none" />
+            )}
             <img
               src={displayPhotos[0]}
               alt="Polaroid Preview"
+              onLoad={() => setIsLoaded(true)}
               onError={handleImgError}
-              className={`w-full h-full object-cover transition-all ${
+              className={`w-full h-full object-cover transition-all duration-300 ${
+                isLoaded ? 'opacity-100' : 'opacity-0'
+              } ${
                 selectedFinish.toLowerCase().includes('matte') ? 'contrast-[0.95] brightness-[1.02]' : 'contrast-[1.05]'
               }`}
             />
