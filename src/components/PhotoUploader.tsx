@@ -60,6 +60,7 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({
   const [overallStage, setOverallStage] = useState<UploadStage>('idle');
   const [overallStageText, setOverallStageText] = useState<string>('');
   const [overallProgress, setOverallProgress] = useState<number>(0);
+  const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -138,7 +139,8 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({
 
     const remainingSlots = maxPhotos - photos.length;
     if (remainingSlots <= 0) {
-      alert(`You have already uploaded the maximum allowed limit of ${maxPhotos} photos.`);
+      setQuotaWarning(`You have already uploaded the maximum allowed limit of ${maxPhotos} photos.`);
+      setTimeout(() => setQuotaWarning(null), 4000);
       return;
     }
 
@@ -255,6 +257,14 @@ export const PhotoUploader: React.FC<PhotoUploaderProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Maximum Photo Limit Notice */}
+      {quotaWarning && (
+        <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs animate-in fade-in">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>{quotaWarning}</span>
+        </div>
+      )}
+
       {/* Upload Dropzone */}
       <div
         onDragOver={(e) => {

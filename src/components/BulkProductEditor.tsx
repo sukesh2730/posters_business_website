@@ -177,7 +177,10 @@ export const BulkProductEditor: React.FC<BulkProductEditorProps> = ({
     });
 
     if (validFiles.length === 0) {
-      alert('Please select valid image files (JPEG, PNG, or WebP).');
+      setBatchStatus((prev) => ({
+        ...prev,
+        errors: [...prev.errors, 'Please select valid image files (JPEG, PNG, or WebP).'],
+      }));
       return;
     }
 
