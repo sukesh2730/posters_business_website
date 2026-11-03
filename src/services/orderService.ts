@@ -15,6 +15,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { handleFirestoreError, OperationType } from './firestoreErrorHandler';
 import { Order, Product } from '../types';
 import { DEFAULT_PRODUCTS, AVAILABLE_COUPONS } from '../data/defaultProducts';
+import { optimizeImageForUpload } from '../utils/imageOptimization';
 
 // 1. Authoritative Server-side order calculation & price validation (No online payment gateway needed)
 export async function validateServerOrderTotals(payload: {
@@ -41,111 +42,17 @@ export async function validateServerOrderTotals(payload: {
 }
 
 /**
- * Fast client-side image compression and resizing.
- * Downscales images exceeding maxDimension (1920px) and converts to optimized WebP/JPEG.
- * Shrinks 10MB phone camera photos down to 200KB-400KB in ~80ms with 300 DPI clarity.
+ * Fast client-side image compression and resizing./**
+ * Canonical image downscaler delegating to the unified imageOptimization engine.
+ * Downscales images exceeding maxDimension (1920px) and converts to optimized WebP/JPEG/PNG.
  */
 export async function compressImageFile(
   file: File,
   maxDimension = 1920,
   quality = 0.85
 ): Promise<File> {
-  // If already lightweight and standard format, don't re-compress
-  if (file.size <= 350 * 1024 && !file.type.includes('heic')) {
-    return file;
-  }
-
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return file;
-  }
-
-  return new Promise((resolve) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      let width = img.naturalWidth || img.width;
-      let height = img.naturalHeight || img.height;
-
-      // If dimensions are within bounds and under 500KB, resolve as is
-      if (width <= maxDimension && height <= maxDimension && file.size < 500 * 1024) {
-        resolve(file);
-        return;
-      }
-
-      // Proportional downscaling
-      if (width > maxDimension || height > maxDimension) {
-        if (width > height) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        } else {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, width);
-      canvas.height = Math.max(1, height);
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
-        resolve(file);
-        return;
-      }
-
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      const isPngTarget = (file.type === 'image/png' || file.name.toLowerCase().endsWith('.png')) && file.size < 1.5 * 1024 * 1024;
-      const mimeType = isPngTarget ? 'image/png' : 'image/jpeg';
-      const ext = isPngTarget ? '.png' : '.jpg';
-
-      if (mimeType === 'image/jpeg') {
-        // JPEG has no alpha channel. In HTML Canvas, transparent/alpha pixels turn pitch black
-        // when serialized to image/jpeg without a composite background fill.
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      } else {
-        // For PNG, preserve the full alpha transparency channel
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-
-      try {
-        ctx.drawImage(img, 0, 0, width, height);
-      } catch (drawErr) {
-        console.warn('Canvas drawImage error, resolving original file:', drawErr);
-        resolve(file);
-        return;
-      }
-
-      canvas.toBlob(
-        (blob) => {
-          if (!blob || blob.size < 500) {
-            // If blob generation failed or is corrupted/tiny, resolve with original file
-            resolve(file);
-            return;
-          }
-          const cleanName = file.name.replace(/\.[^/.]+$/, '') + ext;
-          const compressed = new File([blob], cleanName, {
-            type: mimeType,
-            lastModified: Date.now(),
-          });
-          resolve(compressed);
-        },
-        mimeType,
-        quality
-      );
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(file);
-    };
-
-    img.src = objectUrl;
-  });
+  const result = await optimizeImageForUpload(file, { maxDimension, initialQuality: quality });
+  return result.file;
 }
 
 export function getGuestSessionId(): string {

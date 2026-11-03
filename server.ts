@@ -62,6 +62,125 @@ const mediaMemoryCache = new Map<string, CachedMedia>();
 const mediaHashCache = new Map<string, string>();
 
 // ----------------------------------------------------
+// Cryptographic Secrets & Signed URL Engine
+// ----------------------------------------------------
+const SERVER_SECRET = process.env.SESSION_SECRET || 'memoprint_secure_image_hmac_secret_2026_prod';
+
+export function generateSignedImageToken(mediaId: string, uploadedBy: string, expiresInMs = 7 * 24 * 60 * 60 * 1000): { token: string; expires: number } {
+  const expires = Date.now() + expiresInMs;
+  const payload = `${mediaId}:${uploadedBy}:${expires}`;
+  const hmac = crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest('hex');
+  return { token: `${expires}.${hmac}`, expires };
+}
+
+export function verifySignedImageToken(mediaId: string, uploadedBy: string, tokenStr: string): boolean {
+  if (!tokenStr || typeof tokenStr !== 'string') return false;
+  const parts = tokenStr.split('.');
+  if (parts.length !== 2) return false;
+  const expires = Number(parts[0]);
+  const providedHmac = parts[1];
+  if (!expires || isNaN(expires) || Date.now() > expires) return false;
+  const expectedPayload = `${mediaId}:${uploadedBy}:${expires}`;
+  const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(expectedPayload).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(providedHmac, 'hex'), Buffer.from(expectedHmac, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+export function generateSignedGuestSession(): { sessionId: string; sessionToken: string } {
+  const sessionId = `guest_${crypto.randomBytes(24).toString('hex')}`;
+  const hmac = crypto.createHmac('sha256', SERVER_SECRET).update(sessionId).digest('hex');
+  return { sessionId, sessionToken: `${sessionId}.${hmac}` };
+}
+
+export function verifyGuestSessionToken(tokenStr: string): string | null {
+  if (!tokenStr || typeof tokenStr !== 'string') return null;
+  const parts = tokenStr.split('.');
+  if (parts.length !== 2) return null;
+  const sessionId = parts[0];
+  const providedHmac = parts[1];
+  if (!sessionId.startsWith('guest_')) return null;
+  const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(sessionId).digest('hex');
+  try {
+    if (crypto.timingSafeEqual(Buffer.from(providedHmac, 'hex'), Buffer.from(expectedHmac, 'hex'))) {
+      return sessionId;
+    }
+  } catch {}
+  return null;
+}
+
+export function parseCookies(req: express.Request): Record<string, string> {
+  const list: Record<string, string> = {};
+  const rc = req.headers.cookie;
+  if (!rc) return list;
+  rc.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    const name = parts[0]?.trim();
+    if (name) {
+      list[name] = decodeURIComponent(parts.slice(1).join('=').trim());
+    }
+  });
+  return list;
+}
+
+export interface AuthoritativeMediaMetadata {
+  id: string;
+  mime: string;
+  visibility: 'public' | 'private';
+  uploadedBy: string;
+  fileName: string;
+  sizeBytes: number;
+}
+
+export async function getAuthoritativeMediaMetadata(mediaId: string): Promise<AuthoritativeMediaMetadata | null> {
+  const cached = mediaMemoryCache.get(mediaId);
+  if (cached) {
+    return {
+      id: mediaId,
+      mime: cached.mime,
+      visibility: cached.visibility || 'public',
+      uploadedBy: cached.uploadedBy || '',
+      fileName: cached.fileName || mediaId,
+      sizeBytes: cached.sizeBytes || 0,
+    };
+  }
+
+  if (db) {
+    try {
+      const docSnap = await getDoc(doc(db, 'media_assets', mediaId));
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        const meta: AuthoritativeMediaMetadata = {
+          id: mediaId,
+          mime: d.contentType || 'image/jpeg',
+          visibility: d.visibility || 'public',
+          uploadedBy: d.uploadedBy || '',
+          fileName: d.fileName || mediaId,
+          sizeBytes: d.sizeBytes || 0,
+        };
+        if (d.data) {
+          mediaMemoryCache.set(mediaId, {
+            buffer: Buffer.from(d.data, 'base64'),
+            mime: meta.mime,
+            fileName: meta.fileName,
+            sizeBytes: meta.sizeBytes,
+            visibility: meta.visibility,
+            uploadedBy: meta.uploadedBy,
+          });
+        }
+        return meta;
+      }
+    } catch (err: any) {
+      logSecurityEvent('MEDIA_METADATA_FETCH_ERROR', { mediaId, error: err.message });
+    }
+  }
+
+  return null;
+}
+
+// ----------------------------------------------------
 // Sliding-Window In-Memory Rate Limiter
 // ----------------------------------------------------
 interface RateLimitEntry {
@@ -207,15 +326,29 @@ export async function verifyRequestAuth(req: express.Request): Promise<Authentic
     }
   }
 
-  // Check guest session header for customer uploads
+  // Check cryptographically signed guest session header or cookie
   const guestHeader = req.headers['x-guest-session'];
-  const guestSession = Array.isArray(guestHeader) ? guestHeader[0] : guestHeader;
-  if (guestSession && typeof guestSession === 'string' && guestSession.trim().length >= 6) {
-    return {
-      uid: `guest_${guestSession.trim().slice(0, 36)}`,
-      email: null,
-      emailVerified: false,
-    };
+  const cookies = parseCookies(req);
+  const rawGuest = (Array.isArray(guestHeader) ? guestHeader[0] : guestHeader) || cookies['memo_guest_session'];
+
+  if (rawGuest && typeof rawGuest === 'string' && rawGuest.trim().length >= 6) {
+    const verifiedSessionId = verifyGuestSessionToken(rawGuest.trim());
+    if (verifiedSessionId) {
+      return {
+        uid: verifiedSessionId,
+        email: null,
+        emailVerified: false,
+      };
+    }
+    // In automated non-production tests or dev environment, allow test guest sessions
+    if (!isProduction) {
+      return {
+        uid: `guest_${rawGuest.trim().slice(0, 36)}`,
+        email: null,
+        emailVerified: false,
+      };
+    }
+    logSecurityEvent('UNVERIFIED_GUEST_SESSION_REJECTED', { ip: req.ip, rawGuest: rawGuest.slice(0, 15) });
   }
 
   return null;
@@ -365,18 +498,34 @@ async function saveToPersistentMediaStore(
   const computedHash = clientHash || crypto.createHash('sha256').update(base64Buffer).digest('hex');
   const dedupKey = visibility === 'public' ? `public_${computedHash}` : `${userUid || 'guest'}_${computedHash}`;
 
+  // Check persistent hash deduplication in Firestore if not in memory cache
+  if (db && !mediaHashCache.has(dedupKey)) {
+    try {
+      const hashSnap = await getDoc(doc(db, 'media_hashes', dedupKey));
+      if (hashSnap.exists()) {
+        const existingId = hashSnap.data().mediaId;
+        if (existingId) {
+          mediaHashCache.set(dedupKey, existingId);
+        }
+      }
+    } catch {}
+  }
+
   if (mediaHashCache.has(dedupKey)) {
     const existingId = mediaHashCache.get(dedupKey)!;
-    const cached = mediaMemoryCache.get(existingId);
-    if (cached) {
+    const existingMeta = await getAuthoritativeMediaMetadata(existingId);
+    if (existingMeta) {
+      const signedToken = existingMeta.visibility === 'private'
+        ? generateSignedImageToken(existingId, existingMeta.uploadedBy)
+        : null;
       return {
         id: existingId,
-        url: `/uploads/${existingId}${meta.ext}`,
-        canonicalUrl: `/api/images/${existingId}`,
-        fileName: cached.fileName,
-        sizeBytes: cached.sizeBytes,
-        mime: cached.mime,
-        visibility: cached.visibility,
+        url: signedToken ? `/uploads/${existingId}${meta.ext}?token=${signedToken.token}` : `/uploads/${existingId}${meta.ext}`,
+        canonicalUrl: signedToken ? `/api/images/${existingId}?token=${signedToken.token}` : `/api/images/${existingId}`,
+        fileName: existingMeta.fileName,
+        sizeBytes: existingMeta.sizeBytes,
+        mime: existingMeta.mime,
+        visibility: existingMeta.visibility,
         isDuplicate: true,
       };
     }
@@ -407,6 +556,16 @@ async function saveToPersistentMediaStore(
       visibility,
       createdAt: new Date().toISOString(),
     });
+
+    // Save deduplication index in Firestore
+    try {
+      await setDoc(doc(db, 'media_hashes', dedupKey), {
+        mediaId,
+        visibility,
+        uploadedBy: userUid || 'guest',
+        createdAt: new Date().toISOString(),
+      });
+    } catch {}
   } catch (e: any) {
     logSecurityEvent('MEDIA_STORAGE_PERSISTENCE_FAILED', { mediaId, error: e.message });
     throw new Error(`Failed to save image to durable storage: ${e.message}`);
@@ -432,10 +591,12 @@ async function saveToPersistentMediaStore(
     }
   } catch {}
 
+  const signedToken = visibility === 'private' ? generateSignedImageToken(mediaId, userUid || 'guest') : null;
+
   return {
     id: mediaId,
-    url: `/uploads/${safeDiskName}`,
-    canonicalUrl: `/api/images/${mediaId}`,
+    url: signedToken ? `/uploads/${safeDiskName}?token=${signedToken.token}` : `/uploads/${safeDiskName}`,
+    canonicalUrl: signedToken ? `/api/images/${mediaId}?token=${signedToken.token}` : `/api/images/${mediaId}`,
     fileName: cleanFileName,
     sizeBytes: base64Buffer.length,
     mime: meta.mime,
@@ -844,6 +1005,22 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
 });
 
 // ----------------------------------------------------
+// Cryptographic Guest Session Minting
+// ----------------------------------------------------
+apiRouter.post('/session/guest', (req, res) => {
+  const { sessionId, sessionToken } = generateSignedGuestSession();
+  res.setHeader(
+    'Set-Cookie',
+    `memo_guest_session=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; SameSite=Lax${isProduction ? '; Secure' : ''}; Max-Age=${30 * 24 * 3600}`
+  );
+  return res.json({
+    success: true,
+    sessionId,
+    sessionToken,
+  });
+});
+
+// ----------------------------------------------------
 // 2. Persistent Photo Upload (Protected & Rate Limited)
 // ----------------------------------------------------
 apiRouter.post('/upload', createRateLimiter(40, 60000, 'upload'), async (req, res) => {
@@ -1116,137 +1293,121 @@ apiRouter.all('/payments/*', (_req, res) => {
 // ----------------------------------------------------
 // 6. Persistent Media Serving & Access Control
 // ----------------------------------------------------
+// Rigorous Authorization-First Architecture:
+// 1. Load authoritative metadata (from memory or Firestore)
+// 2. If metadata missing for customer upload: return 404 immediately (fail-closed, never trust disk)
+// 3. If private: verify signed token, owner UID, or admin BEFORE reading/sending any bytes
+// 4. Only AFTER authorization succeeds: retrieve and serve bytes with strict private no-cache headers
 apiRouter.get('/images/:id', async (req, res) => {
   const { id } = req.params;
   const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
-
-  let buffer: Buffer | null = null;
-  let mime = 'image/jpeg';
-  let visibility: 'public' | 'private' = 'public';
-  let uploadedBy = '';
-
-  // 1. Check in-memory cache
-  const cached = mediaMemoryCache.get(cleanId);
-  if (cached) {
-    buffer = cached.buffer;
-    mime = cached.mime;
-    visibility = cached.visibility || 'public';
-    uploadedBy = cached.uploadedBy || '';
-  } else {
-    // 2. Check local disk
-    for (const ext of ['.webp', '.jpg', '.png']) {
-      const filePath = path.join(uploadsDir, `${cleanId}${ext}`);
-      if (fs.existsSync(filePath)) {
-        try {
-          const fileBuf = fs.readFileSync(filePath);
-          const meta = inspectImageBuffer(fileBuf);
-          buffer = fileBuf;
-          mime = meta.mime;
-          break;
-        } catch {}
-      }
-    }
-
-    // 3. PERSISTENT FALLBACK: Fetch from Firestore media_assets
-    if (db) {
-      try {
-        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.data) {
-            buffer = Buffer.from(data.data, 'base64');
-            mime = data.contentType || 'image/jpeg';
-            visibility = data.visibility || 'public';
-            uploadedBy = data.uploadedBy || '';
-            mediaMemoryCache.set(cleanId, {
-              buffer,
-              mime,
-              fileName: data.fileName || cleanId,
-              sizeBytes: buffer.length,
-              visibility,
-              uploadedBy,
-            });
-            // Cache to disk
-            try {
-              fs.writeFileSync(path.join(uploadsDir, `${cleanId}.jpg`), buffer);
-            } catch {}
-          }
-        }
-      } catch (e: any) {
-        if (!isProduction) {
-          console.warn('Firestore image fetch error:', e.message);
-        }
-      }
-    }
+  if (!cleanId) {
+    return res.status(400).json({ error: 'Invalid image ID.' });
   }
 
-  if (!buffer) {
+  // 1. AUTHORIZATION FIRST: Load authoritative metadata
+  const meta = await getAuthoritativeMediaMetadata(cleanId);
+  if (!meta) {
     return res.status(404).json({ error: 'Image not found.' });
   }
 
-  // Access control on private customer media
-  if (visibility === 'private') {
-    const authUser = await verifyRequestAuth(req);
-    const isOwner = authUser && authUser.uid === uploadedBy;
-    const isAdmin = authUser && isAuthorizedAdmin(authUser);
-    if (!isOwner && !isAdmin) {
+  // 2. AUTHORIZE: If private, verify authorization BEFORE reading or serving bytes
+  if (meta.visibility === 'private') {
+    let authorized = false;
+
+    // Check signed token query parameter (?token=...)
+    const tokenQuery = req.query.token as string;
+    if (tokenQuery && verifySignedImageToken(cleanId, meta.uploadedBy, tokenQuery)) {
+      authorized = true;
+    }
+
+    // Check authenticated user header or signed session
+    if (!authorized) {
+      const authUser = await verifyRequestAuth(req);
+      const isOwner = authUser && authUser.uid === meta.uploadedBy;
+      const isAdmin = authUser && isAuthorizedAdmin(authUser);
+      if (isOwner || isAdmin) {
+        authorized = true;
+      }
+    }
+
+    if (!authorized) {
       logSecurityEvent('UNAUTHORIZED_PRIVATE_MEDIA_ACCESS', { mediaId: cleanId, ip: req.ip });
       return res.status(403).json({ error: 'Forbidden: Private media asset. Access restricted to owner or admin.' });
     }
   }
 
-  res.setHeader('Content-Type', mime);
-  res.setHeader('Cache-Control', visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache');
+  // 3. RETRIEVE BYTES: Only AFTER authorization has passed
+  let buffer: Buffer | null = null;
+  const cached = mediaMemoryCache.get(cleanId);
+  if (cached?.buffer) {
+    buffer = cached.buffer;
+  } else {
+    // Check local disk cache
+    for (const ext of ['.webp', '.jpg', '.png']) {
+      const filePath = path.join(uploadsDir, `${cleanId}${ext}`);
+      if (fs.existsSync(filePath)) {
+        try {
+          buffer = fs.readFileSync(filePath);
+          break;
+        } catch {}
+      }
+    }
+    // Persistent fallback: Firestore document data
+    if (!buffer && db) {
+      try {
+        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
+        if (docSnap.exists() && docSnap.data().data) {
+          buffer = Buffer.from(docSnap.data().data, 'base64');
+        }
+      } catch {}
+    }
+  }
+
+  if (!buffer) {
+    return res.status(404).json({ error: 'Image data could not be retrieved.' });
+  }
+
+  res.setHeader('Content-Type', meta.mime);
+  res.setHeader(
+    'Cache-Control',
+    meta.visibility === 'public'
+      ? 'public, max-age=31536000, immutable'
+      : 'private, no-cache, no-store, must-revalidate'
+  );
   return res.send(buffer);
 });
 
 apiRouter.head('/images/:id', async (req, res) => {
   const { id } = req.params;
   const cleanId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!cleanId) return res.status(400).end();
 
-  let visibility: 'public' | 'private' = 'public';
-  let uploadedBy = '';
-  let exists = false;
-
-  if (mediaMemoryCache.has(cleanId)) {
-    const c = mediaMemoryCache.get(cleanId)!;
-    visibility = c.visibility || 'public';
-    uploadedBy = c.uploadedBy || '';
-    exists = true;
-  } else {
-    for (const ext of ['.webp', '.jpg', '.png']) {
-      if (fs.existsSync(path.join(uploadsDir, `${cleanId}${ext}`))) {
-        exists = true;
-        break;
-      }
-    }
-
-    if (db) {
-      try {
-        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          visibility = d.visibility || 'public';
-          uploadedBy = d.uploadedBy || '';
-          exists = true;
-        }
-      } catch {}
-    }
-  }
-
-  if (!exists) {
+  const meta = await getAuthoritativeMediaMetadata(cleanId);
+  if (!meta) {
     return res.status(404).end();
   }
 
-  if (visibility === 'private') {
-    const authUser = await verifyRequestAuth(req);
-    const isOwner = authUser && authUser.uid === uploadedBy;
-    const isAdmin = authUser && isAuthorizedAdmin(authUser);
-    if (!isOwner && !isAdmin) {
+  if (meta.visibility === 'private') {
+    let authorized = false;
+    const tokenQuery = req.query.token as string;
+    if (tokenQuery && verifySignedImageToken(cleanId, meta.uploadedBy, tokenQuery)) {
+      authorized = true;
+    }
+    if (!authorized) {
+      const authUser = await verifyRequestAuth(req);
+      const isOwner = authUser && authUser.uid === meta.uploadedBy;
+      const isAdmin = authUser && isAuthorizedAdmin(authUser);
+      if (isOwner || isAdmin) {
+        authorized = true;
+      }
+    }
+    if (!authorized) {
       return res.status(403).end();
     }
   }
 
+  res.setHeader('Content-Type', meta.mime);
   return res.status(200).end();
 });
 
@@ -1267,92 +1428,76 @@ app.get('/health', (_req, res) => {
 // Backward-compatible static /uploads handler with persistent fallback and access control
 app.get('/uploads/:fileName', async (req, res) => {
   const fileName = path.basename(req.params.fileName);
-  const mediaId = fileName.replace(/\.[a-zA-Z0-9]+$/, '');
-  
-  // Access control check for private customer media
-  let mediaRecord = mediaMemoryCache.get(mediaId);
-  if (!mediaRecord && db) {
-    const idMatch = fileName.match(/^(img_[a-zA-Z0-9_]+|photo_[a-zA-Z0-9_]+)/);
-    if (idMatch) {
-      try {
-        const docSnap = await getDoc(doc(db, 'media_assets', idMatch[1]));
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          mediaRecord = {
-            buffer: Buffer.from(d.data || '', 'base64'),
-            mime: d.contentType || 'image/jpeg',
-            fileName: d.fileName || idMatch[1],
-            sizeBytes: d.sizeBytes || 0,
-            visibility: d.visibility || 'public',
-            uploadedBy: d.uploadedBy || '',
-          };
-          mediaMemoryCache.set(idMatch[1], mediaRecord);
-        }
-      } catch {}
+  const cleanId = fileName.replace(/\.[a-zA-Z0-9]+$/, '');
+  const isCustomerPhoto = /^(img_|photo_)/.test(fileName);
+
+  // If customer photo pattern: REQUIRE authoritative metadata and authorization FIRST!
+  if (isCustomerPhoto) {
+    const meta = await getAuthoritativeMediaMetadata(cleanId);
+    if (!meta) {
+      // FAIL-CLOSED: Disk existence is NOT sufficient!
+      return res.status(404).json({ error: 'Image metadata not found.' });
     }
-  }
 
-  if (mediaRecord && mediaRecord.visibility === 'private') {
-    const authUser = await verifyRequestAuth(req);
-    const isOwner = authUser && authUser.uid === mediaRecord.uploadedBy;
-    const isAdmin = authUser && isAuthorizedAdmin(authUser);
-    if (!isOwner && !isAdmin) {
-      logSecurityEvent('UNAUTHORIZED_PRIVATE_UPLOADS_ACCESS', { fileName, ip: req.ip });
-      return res.status(403).json({ error: 'Forbidden: Private media asset. Access restricted to owner or admin.' });
-    }
-  }
-
-  // Search in all candidate upload directory locations
-  const possiblePaths = [
-    path.join(uploadsDir, fileName),
-    path.resolve(process.cwd(), 'public', 'uploads', fileName),
-    path.resolve(process.cwd(), 'dist', 'uploads', fileName),
-    path.resolve(process.cwd(), 'uploads', fileName),
-  ];
-
-  // 1. Search in all candidate upload directory locations
-  for (const diskPath of possiblePaths) {
-    if (fs.existsSync(diskPath)) {
-      try {
-        const stat = fs.statSync(diskPath);
-        if (stat.size > 300) {
-          const cacheControl = mediaRecord?.visibility === 'private' ? 'private, no-cache' : 'public, max-age=31536000, immutable';
-          res.setHeader('Cache-Control', cacheControl);
-          return res.sendFile(diskPath, { cacheControl: false });
-        }
-      } catch {}
-    }
-  }
-
-  // 2. Extract ID if file name matches photo_... or img_... and fetch from Firestore media_assets
-  const idMatch = fileName.match(/^(img_[a-zA-Z0-9_]+|photo_[a-zA-Z0-9_]+)/);
-  if (idMatch && db) {
-    const id = idMatch[1];
-    try {
-      const docSnap = await getDoc(doc(db, 'media_assets', id));
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.data) {
-          const buffer = Buffer.from(data.data, 'base64');
-          res.setHeader('Content-Type', data.contentType || 'image/jpeg');
-          res.setHeader('Cache-Control', data.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache');
-          return res.send(buffer);
+    if (meta.visibility === 'private') {
+      let authorized = false;
+      const tokenQuery = req.query.token as string;
+      if (tokenQuery && verifySignedImageToken(cleanId, meta.uploadedBy, tokenQuery)) {
+        authorized = true;
+      }
+      if (!authorized) {
+        const authUser = await verifyRequestAuth(req);
+        const isOwner = authUser && authUser.uid === meta.uploadedBy;
+        const isAdmin = authUser && isAuthorizedAdmin(authUser);
+        if (isOwner || isAdmin) {
+          authorized = true;
         }
       }
-    } catch {}
-  }
 
-  // 3. Fallback: If image file exists on disk even if small, serve it as last resort
-  for (const diskPath of possiblePaths) {
+      if (!authorized) {
+        logSecurityEvent('UNAUTHORIZED_PRIVATE_UPLOADS_ACCESS', { fileName, ip: req.ip });
+        return res.status(403).json({ error: 'Forbidden: Private media asset. Access restricted to owner or admin.' });
+      }
+    }
+
+    // Authorized: Serve bytes (from memory, disk, or Firestore)
+    const cached = mediaMemoryCache.get(cleanId);
+    if (cached?.buffer) {
+      res.setHeader('Content-Type', meta.mime);
+      res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
+      return res.send(cached.buffer);
+    }
+
+    const diskPath = path.join(uploadsDir, fileName);
     if (fs.existsSync(diskPath)) {
-      const cacheControl = mediaRecord?.visibility === 'private' ? 'private, no-cache' : 'public, max-age=31536000, immutable';
-      res.setHeader('Cache-Control', cacheControl);
+      res.setHeader('Content-Type', meta.mime);
+      res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
       return res.sendFile(diskPath, { cacheControl: false });
     }
+
+    // Fallback: load from Firestore
+    if (db) {
+      try {
+        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
+        if (docSnap.exists() && docSnap.data().data) {
+          const buffer = Buffer.from(docSnap.data().data, 'base64');
+          res.setHeader('Content-Type', meta.mime);
+          res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
+          return res.send(buffer);
+        }
+      } catch {}
+    }
+
+    return res.status(404).json({ error: 'Image file could not be read.' });
   }
 
-  // 4. Return safe 404 rather than next() to avoid Vite/SPA returning 200 text/html for <img> tags
-  return res.status(404).type('text/plain').send('Image not found');
+  // Non-customer static asset (e.g. placeholder, logo, UI asset)
+  const safeStaticPath = path.join(uploadsDir, fileName);
+  if (fs.existsSync(safeStaticPath)) {
+    return res.sendFile(safeStaticPath);
+  }
+
+  return res.status(404).json({ error: 'File not found.' });
 });
 
 // Mount Backend API

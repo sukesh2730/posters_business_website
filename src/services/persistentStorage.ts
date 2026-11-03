@@ -142,16 +142,16 @@ export async function uploadPhotoPersistently(
   const fileName = optimized.file.name.replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 100);
   const folder = options?.folder || 'photos';
 
-  // 3. Attempt Primary: Firebase Storage Object Storage (if initialized and available)
+  // 3. Attempt Primary: Firebase Storage Object Storage (for authenticated users)
   try {
-    if (storage && (storage as any).app) {
+    if (storage && (storage as any).app && auth.currentUser) {
       const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
       const storageRef = ref(storage, `${folder}/${mediaId}_${fileName}`);
       options?.onProgress?.(55);
       const snapshot = await uploadBytes(storageRef, optimized.file, {
         contentType,
         customMetadata: {
-          uploadedBy: auth.currentUser?.uid || 'guest',
+          uploadedBy: auth.currentUser.uid,
           fileName,
           hash: optimized.hash,
         },
@@ -160,23 +160,19 @@ export async function uploadPhotoPersistently(
 
       // Save metadata in Firestore (durable record)
       if (db) {
-        try {
-          const docRef = doc(db, 'media_assets', mediaId);
-          await setDoc(docRef, {
-            id: mediaId,
-            url: downloadUrl,
-            storagePath: snapshot.ref.fullPath,
-            fileName,
-            contentType,
-            sizeBytes: optimized.sizeBytes,
-            hash: optimized.hash,
-            uploadedBy: auth.currentUser?.uid || 'guest',
-            visibility: options?.isPublic ? 'public' : 'private',
-            createdAt: new Date().toISOString(),
-          });
-        } catch {
-          // Non-blocking metadata write
-        }
+        const docRef = doc(db, 'media_assets', mediaId);
+        await setDoc(docRef, {
+          id: mediaId,
+          url: downloadUrl,
+          storagePath: snapshot.ref.fullPath,
+          fileName,
+          contentType,
+          sizeBytes: optimized.sizeBytes,
+          hash: optimized.hash,
+          uploadedBy: auth.currentUser.uid,
+          visibility: options?.isPublic ? 'public' : 'private',
+          createdAt: new Date().toISOString(),
+        });
       }
 
       options?.onStageChange?.('Uploaded successfully');
@@ -195,7 +191,7 @@ export async function uploadPhotoPersistently(
     }
   } catch (storageErr: any) {
     if (import.meta.env.DEV) {
-      console.warn('Firebase Storage direct upload skipped, using resilient persistent media endpoint:', storageErr?.message);
+      console.warn('Firebase Storage direct upload skipped or failed, using resilient persistent media endpoint:', storageErr?.message);
     }
   }
 
@@ -213,8 +209,24 @@ export async function uploadPhotoPersistently(
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       } else {
-        const guestId = sessionStorage.getItem('memo_guest_session_id') || `guest_${safeRandom}`;
-        sessionStorage.setItem('memo_guest_session_id', guestId);
+        let guestId = sessionStorage.getItem('memo_guest_session_id');
+        if (!guestId) {
+          try {
+            const sessRes = await fetch('/api/session/guest', { method: 'POST' });
+            if (sessRes.ok) {
+              const sessData = await sessRes.json();
+              if (sessData?.sessionId) {
+                guestId = sessData.sessionId;
+              }
+            }
+          } catch {
+            // fallback
+          }
+          if (!guestId) {
+            guestId = `guest_${safeRandom}`;
+          }
+          sessionStorage.setItem('memo_guest_session_id', guestId);
+        }
         headers['x-guest-session'] = guestId;
       }
 

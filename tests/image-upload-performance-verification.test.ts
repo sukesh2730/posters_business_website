@@ -249,8 +249,9 @@ async function runSuite() {
     );
     reportPass('Customer photos protected with private cache-control headers');
 
-    // Unauthenticated access from another guest must be rejected with 403 Forbidden
-    const unauthorizedFetch = await fetch(`${BASE_URL}${data.url}`, {
+    // Unauthenticated access from another guest without owner signed token must be rejected with 403 Forbidden
+    const rawUrl = data.url.split('?')[0];
+    const unauthorizedFetch = await fetch(`${BASE_URL}${rawUrl}`, {
       headers: { 'x-guest-session': 'different_unauthorized_guest' },
     });
     assert.strictEqual(unauthorizedFetch.status, 403, 'Unauthorized access to private photo rejected with 403');
