@@ -83,32 +83,92 @@ export function verifySignedImageToken(mediaId: string, uploadedBy: string, toke
   const expectedPayload = `${mediaId}:${uploadedBy}:${expires}`;
   const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(expectedPayload).digest('hex');
   try {
-    return crypto.timingSafeEqual(Buffer.from(providedHmac, 'hex'), Buffer.from(expectedHmac, 'hex'));
+    const providedBuf = Buffer.from(providedHmac, 'hex');
+    const expectedBuf = Buffer.from(expectedHmac, 'hex');
+    if (providedBuf.length !== expectedBuf.length || providedBuf.length === 0) return false;
+    return crypto.timingSafeEqual(providedBuf, expectedBuf);
   } catch {
     return false;
   }
 }
 
-export function generateSignedGuestSession(): { sessionId: string; sessionToken: string } {
+export function generateSignedGuestSession(expiresInMs = 30 * 24 * 60 * 60 * 1000): { sessionId: string; sessionToken: string; expires: number } {
   const sessionId = `guest_${crypto.randomBytes(24).toString('hex')}`;
-  const hmac = crypto.createHmac('sha256', SERVER_SECRET).update(sessionId).digest('hex');
-  return { sessionId, sessionToken: `${sessionId}.${hmac}` };
+  const expires = Date.now() + expiresInMs;
+  const payload = `${sessionId}:${expires}`;
+  const hmac = crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest('hex');
+  return { sessionId, sessionToken: `${sessionId}.${expires}.${hmac}`, expires };
 }
 
 export function verifyGuestSessionToken(tokenStr: string): string | null {
   if (!tokenStr || typeof tokenStr !== 'string') return null;
   const parts = tokenStr.split('.');
-  if (parts.length !== 2) return null;
-  const sessionId = parts[0];
-  const providedHmac = parts[1];
-  if (!sessionId.startsWith('guest_')) return null;
-  const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(sessionId).digest('hex');
-  try {
-    if (crypto.timingSafeEqual(Buffer.from(providedHmac, 'hex'), Buffer.from(expectedHmac, 'hex'))) {
-      return sessionId;
-    }
-  } catch {}
+  
+  // Format with explicit expiry timestamp: sessionId.expires.hmac
+  if (parts.length === 3) {
+    const sessionId = parts[0];
+    const expires = Number(parts[1]);
+    const providedHmac = parts[2];
+    if (!sessionId.startsWith('guest_') || !expires || isNaN(expires) || Date.now() > expires) return null;
+    const payload = `${sessionId}:${expires}`;
+    const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest('hex');
+    try {
+      const pBuf = Buffer.from(providedHmac, 'hex');
+      const eBuf = Buffer.from(expectedHmac, 'hex');
+      if (pBuf.length === eBuf.length && pBuf.length > 0 && crypto.timingSafeEqual(pBuf, eBuf)) {
+        return sessionId;
+      }
+    } catch {}
+    return null;
+  }
+
+  // Backwards compatibility for 2-part tokens: sessionId.hmac
+  if (parts.length === 2) {
+    const sessionId = parts[0];
+    const providedHmac = parts[1];
+    if (!sessionId.startsWith('guest_')) return null;
+    const expectedHmac = crypto.createHmac('sha256', SERVER_SECRET).update(sessionId).digest('hex');
+    try {
+      const pBuf = Buffer.from(providedHmac, 'hex');
+      const eBuf = Buffer.from(expectedHmac, 'hex');
+      if (pBuf.length === eBuf.length && pBuf.length > 0 && crypto.timingSafeEqual(pBuf, eBuf)) {
+        return sessionId;
+      }
+    } catch {}
+    return null;
+  }
+
   return null;
+}
+
+export function generateOrderSignature(orderId: string, total: number, userId: string, paymentMethod: string): string {
+  const payload = `${orderId}:${Math.round(total)}:${userId}:${paymentMethod}`;
+  return crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest('hex');
+}
+
+export function verifyOrderSignature(order: { id: string; total: number; userId: string; paymentMethod: string; orderSignature?: string }): boolean {
+  if (!order.orderSignature || typeof order.orderSignature !== 'string') return false;
+  const expected = generateOrderSignature(order.id, order.total, order.userId, order.paymentMethod);
+  try {
+    const pBuf = Buffer.from(order.orderSignature, 'hex');
+    const eBuf = Buffer.from(expected, 'hex');
+    return pBuf.length === eBuf.length && pBuf.length > 0 && crypto.timingSafeEqual(pBuf, eBuf);
+  } catch {
+    return false;
+  }
+}
+
+export function setMediaCacheHeaders(res: express.Response, visibility: 'public' | 'private', mime: string) {
+  res.setHeader('Content-Type', mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (visibility === 'public') {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  } else {
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Vary', 'Cookie, Authorization, Origin');
+  }
 }
 
 export function parseCookies(req: express.Request): Record<string, string> {
@@ -964,6 +1024,7 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       paymentMethod: 'cod' as const,
       paymentStatus: 'pending' as const,
       orderStatus: 'pending_confirmation' as const,
+      orderSignature: generateOrderSignature(orderId, calculated.total, userId, 'cod'),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1368,13 +1429,7 @@ apiRouter.get('/images/:id', async (req, res) => {
     return res.status(404).json({ error: 'Image data could not be retrieved.' });
   }
 
-  res.setHeader('Content-Type', meta.mime);
-  res.setHeader(
-    'Cache-Control',
-    meta.visibility === 'public'
-      ? 'public, max-age=31536000, immutable'
-      : 'private, no-cache, no-store, must-revalidate'
-  );
+  setMediaCacheHeaders(res, meta.visibility, meta.mime);
   return res.send(buffer);
 });
 
@@ -1463,15 +1518,13 @@ app.get('/uploads/:fileName', async (req, res) => {
     // Authorized: Serve bytes (from memory, disk, or Firestore)
     const cached = mediaMemoryCache.get(cleanId);
     if (cached?.buffer) {
-      res.setHeader('Content-Type', meta.mime);
-      res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
+      setMediaCacheHeaders(res, meta.visibility, meta.mime);
       return res.send(cached.buffer);
     }
 
     const diskPath = path.join(uploadsDir, fileName);
     if (fs.existsSync(diskPath)) {
-      res.setHeader('Content-Type', meta.mime);
-      res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
+      setMediaCacheHeaders(res, meta.visibility, meta.mime);
       return res.sendFile(diskPath, { cacheControl: false });
     }
 
@@ -1481,8 +1534,7 @@ app.get('/uploads/:fileName', async (req, res) => {
         const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
         if (docSnap.exists() && docSnap.data().data) {
           const buffer = Buffer.from(docSnap.data().data, 'base64');
-          res.setHeader('Content-Type', meta.mime);
-          res.setHeader('Cache-Control', meta.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-cache, no-store, must-revalidate');
+          setMediaCacheHeaders(res, meta.visibility, meta.mime);
           return res.send(buffer);
         }
       } catch {}

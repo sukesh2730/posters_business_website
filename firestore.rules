@@ -54,7 +54,7 @@ service cloud.firestore {
     // - Locks initial paymentStatus to 'pending'
     // - Locks paymentMethod to 'cod'
     function isValidOrder(data) {
-      return data.keys().hasAll(['userId', 'userEmail', 'customerName', 'customerPhone', 'items', 'total', 'orderStatus', 'paymentStatus'])
+      return data.keys().hasAll(['userId', 'userEmail', 'customerName', 'customerPhone', 'items', 'total', 'orderStatus', 'paymentStatus', 'orderSignature'])
         && data.userId is string && data.userId.size() <= 128 && (!isSignedIn() || data.userId == request.auth.uid)
         && data.userEmail is string && data.userEmail.size() <= 200
         && data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100
@@ -63,7 +63,8 @@ service cloud.firestore {
         && data.total is number && data.total >= 0
         && data.orderStatus == 'pending_confirmation'
         && (data.paymentStatus == 'pending' || data.paymentStatus == 'pending_instructions')
-        && (!('paymentMethod' in data) || data.paymentMethod == 'cod');
+        && (!('paymentMethod' in data) || data.paymentMethod == 'cod')
+        && data.orderSignature is string && data.orderSignature.size() == 64;
     }
 
     function isValidMediaAsset(data) {

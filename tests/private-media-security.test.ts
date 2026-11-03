@@ -162,6 +162,108 @@ async function runPrivateMediaSecurityTests() {
     assert(false, `Owner test failed: ${e.message}`);
   }
 
+  // Step 9: Expired Token Rejection (Fail-Closed)
+  console.log('\n--- 9. Expired Token Verification ---');
+  try {
+    const rawUrl = permanentUrlWithToken.split('?')[0];
+    const pastTimestamp = Date.now() - 60000; // 1 minute in the past
+    // Mint token with past expiry
+    const expiredToken = `${pastTimestamp}.${crypto.randomBytes(32).toString('hex')}`;
+    const expRes = await fetch(`${BASE_URL}${rawUrl}?token=${expiredToken}`);
+    assert(expRes.status === 403, 'Expired signed URL token strictly rejected with 403 Forbidden');
+  } catch (e: any) {
+    assert(false, `Expired token test failed: ${e.message}`);
+  }
+
+  // Step 10: Media ID Tampering (Token Replay on Different Asset)
+  console.log('\n--- 10. Cross-Asset Signature Replay Rejection ---');
+  try {
+    const validToken = permanentUrlWithToken.split('token=')[1];
+    // Attempt to use media A's valid token to access another media ID
+    const fakeOtherMedia = `/uploads/img_9999999999999_fakeotherid.png`;
+    const replayRes = await fetch(`${BASE_URL}${fakeOtherMedia}?token=${validToken}`);
+    assert(replayRes.status === 403 || replayRes.status === 404, 'Token bound to media A cannot authorize media B');
+  } catch (e: any) {
+    assert(false, `Token replay test failed: ${e.message}`);
+  }
+
+  // Step 11: Expiry Timestamp Tampering
+  console.log('\n--- 11. Expiry Timestamp Modification Rejection ---');
+  try {
+    const rawUrl = permanentUrlWithToken.split('?')[0];
+    const validToken = permanentUrlWithToken.split('token=')[1];
+    const [originalExp, originalSig] = validToken.split('.');
+    const extendedExp = String(Number(originalExp) + 86400000); // Add 1 day
+    const tamperedToken = `${extendedExp}.${originalSig}`;
+    const tamperRes = await fetch(`${BASE_URL}${rawUrl}?token=${tamperedToken}`);
+    assert(tamperRes.status === 403, 'Modifying expiry timestamp invalidates signature (HTTP 403 Forbidden)');
+  } catch (e: any) {
+    assert(false, `Expiry tampering test failed: ${e.message}`);
+  }
+
+  // Step 12: Expired Guest Session Rejection
+  console.log('\n--- 12. Expired Guest Session Invalidation ---');
+  try {
+    const expiredGuest = `guest_${crypto.randomBytes(24).toString('hex')}.${Date.now() - 3600000}.${crypto.randomBytes(32).toString('hex')}`;
+    const rawUrl = `/api/images/${uploadedMediaId}`;
+    const expGuestRes = await fetch(`${BASE_URL}${rawUrl}`, {
+      headers: { 'x-guest-session': expiredGuest },
+    });
+    assert(expGuestRes.status === 403, 'Expired guest session rejected with HTTP 403');
+  } catch (e: any) {
+    assert(false, `Expired guest session test failed: ${e.message}`);
+  }
+
+  // Step 13: Strict Anti-CDN & Private Caching Headers
+  console.log('\n--- 13. Anti-CDN & Anti-Proxy Cache Leakage Headers ---');
+  try {
+    const res = await fetch(`${BASE_URL}${permanentUrlWithToken}`);
+    const cacheControl = res.headers.get('cache-control') || '';
+    const pragma = res.headers.get('pragma') || '';
+    const expires = res.headers.get('expires') || '';
+    const vary = res.headers.get('vary') || '';
+    const nosniff = res.headers.get('x-content-type-options') || '';
+
+    assert(cacheControl.includes('no-store') && cacheControl.includes('private'), 'Cache-Control includes private and no-store');
+    assert(pragma === 'no-cache', 'Pragma header is no-cache');
+    assert(expires === '0', 'Expires header is 0');
+    assert(vary.includes('Authorization') || vary.includes('Cookie'), 'Vary header protects against shared proxy cache mixing');
+    assert(nosniff === 'nosniff', 'X-Content-Type-Options: nosniff enforced');
+  } catch (e: any) {
+    assert(false, `Cache header test failed: ${e.message}`);
+  }
+
+  // Step 14: Order Authoritative HMAC Signature Integrity
+  console.log('\n--- 14. Order Authoritative Signature Integrity ---');
+  try {
+    const orderRes = await fetch(`${BASE_URL}/api/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: 'Security Audit Customer',
+        customerPhone: '9876543210',
+        userEmail: 'audit@example.com',
+        shippingAddress: {
+          addressLine1: '123 MG Road, Koramangala',
+          city: 'Bengaluru',
+          state: 'Karnataka',
+          pincode: '560001',
+        },
+        items: [{
+          productId: 'prod-polaroid-classic',
+          quantity: 1,
+        }],
+        paymentMethod: 'cod',
+      }),
+    });
+    assert(orderRes.status === 201, 'Authoritative server creates order via /api/orders (201 Created)');
+    const orderData = await orderRes.json();
+    assert(Boolean(orderData.order && orderData.order.orderSignature), 'Server stamps cryptographic orderSignature');
+    assert(orderData.order.orderSignature.length === 64, 'orderSignature is 64-character SHA-256 HMAC');
+  } catch (e: any) {
+    assert(false, `Order signature test failed: ${e.message}`);
+  }
+
   console.log('\n======================================================================');
   console.log(`TOTAL CHECKS: ${passed + failed}`);
   console.log(`PASSED: ${passed}`);
