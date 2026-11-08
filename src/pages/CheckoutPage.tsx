@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { BuilderThumb } from '../components/BuilderThumb';
 import { 
   ShieldCheck, 
   Lock, 
@@ -160,6 +161,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
           caption: it.caption || undefined,
           notes: it.notes || undefined,
           frameColor: it.frameColor || undefined,
+          builder: it.builder || undefined,
         })),
         couponCode: appliedCoupon || undefined,
         paymentMethod: 'cod',
@@ -464,6 +466,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
           <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto space-y-3 pr-1">
             {items.map((item) => (
               <div key={item.id} className="pt-3 first:pt-0 flex gap-3 items-center">
+                {item.builder ? (
+                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-100 shrink-0 border border-slate-200">
+                    <BuilderThumb builder={item.builder} />
+                  </div>
+                ) : (
                 <img
                   src={item.photos[0] || resolveProductImageUrl(item.product)}
                   alt={item.product.name}
@@ -473,6 +480,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   }}
                   className="w-12 h-12 rounded-lg object-cover bg-slate-100 shrink-0 border border-slate-200"
                 />
+                )}
                 <div className="flex-1 min-w-0 text-xs">
                   <p className="font-semibold text-slate-800 truncate">{item.product.name}</p>
                   <p className="text-[11px] text-slate-400">

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BuilderThumb } from './BuilderThumb';
 import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight, Tag, Check, Sparkles } from 'lucide-react';
 import { useCart } from '../services/cartContext';
 import { resolveProductImageUrl, DEFAULT_FALLBACK_PRODUCT_IMAGE } from '../services/orderService';
@@ -111,6 +112,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div key={item.id} className="py-4 flex gap-3.5 items-start">
                   {/* Thumbnail */}
                   <div className="w-18 h-18 rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-200 relative">
+                    {item.builder ? (
+                      <BuilderThumb builder={item.builder} />
+                    ) : (
                     <img
                       src={item.photos[0] || resolveProductImageUrl(item.product)}
                       alt={item.product.name}
@@ -120,7 +124,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       }}
                       className="w-full h-full object-cover"
                     />
-                    {item.photos.length > 1 && (
+                    )}
+                    {!item.builder && item.photos.length > 1 && (
                       <span className="absolute bottom-1 right-1 bg-black/70 text-[9px] text-white px-1 rounded font-mono">
                         {item.photos.length} photos
                       </span>

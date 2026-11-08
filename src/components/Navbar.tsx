@@ -147,6 +147,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Collections</span>
             </button>
 
+            {[
+              { route: 'wall-builder', label: 'Build your wall' },
+              { route: 'mix-match', label: 'Mix & match' },
+              { route: 'split-builder', label: 'Split posters' },
+            ].map((l) => (
+              <button
+                key={l.route}
+                onClick={() => onNavigate(l.route)}
+                className={`hover:text-rose-600 transition-colors ${currentRoute === l.route ? 'text-rose-600 font-bold' : ''}`}
+              >
+                {l.label}
+              </button>
+            ))}
+
             <button
               onClick={() => onNavigate('catalog')}
               className={`hover:text-rose-600 transition-colors flex items-center gap-1 ${
@@ -406,6 +420,26 @@ export const Navbar: React.FC<NavbarProps> = ({
               />
             </div>
           </form>
+
+          <div className="space-y-1.5">
+            {[
+              { route: 'wall-builder', label: 'Build your wall', sub: '17 to 40 posters in one layout' },
+              { route: 'mix-match', label: 'Mix & match posters', sub: 'Buy more, pay less per poster' },
+              { route: 'split-builder', label: 'Split posters', sub: 'One image across 3, 4, 5 or 8 panels' },
+            ].map((l) => (
+              <button
+                key={l.route}
+                onClick={() => {
+                  onNavigate(l.route);
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full p-2.5 text-left rounded-xl hover:bg-rose-50 bg-stone-50 text-xs"
+              >
+                <p className="font-bold text-slate-800">{l.label}</p>
+                <p className="text-[10px] text-slate-500">{l.sub}</p>
+              </button>
+            ))}
+          </div>
 
           {/* Section Grid for Mobile */}
           <div>

@@ -18,6 +18,9 @@ import { AdminPage } from './pages/AdminPage';
 import { ContactPage } from './pages/ContactPage';
 import { FAQPage } from './pages/FAQPage';
 import { PolicyPages } from './pages/PolicyPages';
+import { WallBuilderPage } from './pages/WallBuilderPage';
+import { SplitBuilderPage } from './pages/SplitBuilderPage';
+import { MixMatchPage } from './pages/MixMatchPage';
 
 import { getProductsCatalog, getStoreCollections } from './services/orderService';
 import { Product, Order, CollectionInfo } from './types';
@@ -209,6 +212,18 @@ function MainApp() {
             onBack={() => handleNavigate('catalog')}
             onOpenCart={() => setIsCartOpen(true)}
           />
+        )}
+
+        {currentRoute === 'wall-builder' && (
+          <WallBuilderPage key={routeParam || 'wall'} initialLayoutId={routeParam} onOpenCart={() => setIsCartOpen(true)} />
+        )}
+
+        {currentRoute === 'split-builder' && (
+          <SplitBuilderPage key={routeParam || 'split'} initialPieces={routeParam} onOpenCart={() => setIsCartOpen(true)} />
+        )}
+
+        {currentRoute === 'mix-match' && (
+          <MixMatchPage key={routeParam || 'mix'} initialTheme={routeParam} initialTier={routeParam} onOpenCart={() => setIsCartOpen(true)} />
         )}
 
         {currentRoute === 'checkout' && (

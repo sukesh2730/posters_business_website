@@ -9,6 +9,7 @@ const testSuites = [
   { name: '7 Storefront Sections Verification', script: 'tests/sections-verification.test.ts' },
   { name: 'P0/P1 Security & Persistence Verification', script: 'tests/p0-p1-fixes-verification.test.ts' },
   { name: 'Bulk Product Editor Verification', script: 'tests/bulk-editor-verification.test.ts' },
+  { name: 'Wall, Split and Mix & Match Builders', script: 'tests/print-builders.test.ts' },
 ];
 
 console.log('======================================================================');

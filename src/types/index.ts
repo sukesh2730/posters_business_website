@@ -1,3 +1,5 @@
+import type { BuilderConfig } from '../shared/printPricing';
+
 export type ProductCategory = 
   | 'polaroids'
   | 'photo-strips'
@@ -80,6 +82,8 @@ export interface CartItem {
   fontStyle?: string;
   frameColor?: string;
   previewThumbnail?: string;
+  /** set for wall / split / mix & match items; the server prices these from this config */
+  builder?: BuilderConfig;
 }
 
 export interface ShippingAddress {
@@ -126,6 +130,7 @@ export interface OrderItemSummary {
   caption?: string;
   notes?: string;
   frameColor?: string;
+  builder?: BuilderConfig;
 }
 
 export interface Order {

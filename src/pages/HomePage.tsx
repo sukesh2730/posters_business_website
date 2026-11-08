@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { PosterShowcase } from '../components/PosterShowcase';
 import { 
   Sparkles, 
   Search, 
@@ -527,6 +528,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             )}
           </div>
         </section>
+      )}
+
+      {selectedCollection === 'all' && !searchQuery && (
+        <PosterShowcase products={products} onNavigate={onNavigate} onSelectProduct={onSelectProduct} />
       )}
 
       {/* Shopping Experience: Visible Product Cards with Prices, Images & Add to Cart Actions */}

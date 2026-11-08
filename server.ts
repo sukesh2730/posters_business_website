@@ -4,6 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { priceBuilder, sanitizeBuilder } from './src/shared/printPricing';
 
 export interface AuthenticatedUser {
   uid: string;
@@ -323,7 +324,10 @@ export const TRUSTED_CATALOG: Record<string, { id: string; name: string; price: 
   'prod-poster-starmap-constellation': { id: 'prod-poster-starmap-constellation', name: 'Custom Night Sky & Constellation Star Map Poster', price: 549, isActive: true },
   'prod-bundle-fairylight-kit': { id: 'prod-bundle-fairylight-kit', name: 'Cozy Room Fairy Light & Polaroid Wall Hanging Bundle', price: 499, isActive: true },
   'prod-bundle-ultimate-magnets': { id: 'prod-bundle-ultimate-magnets', name: 'Fridge Magic Set: 12 Polaroid Magnets + 4 Photostrips', price: 549, isActive: true },
-  'prod-bundle-bff-memory-pack': { id: 'prod-bundle-bff-memory-pack', name: 'BFF Memory Pack: 6 Holographic Strips + 15 Pastel Polaroids', price: 449, isActive: true }
+  'prod-bundle-bff-memory-pack': { id: 'prod-bundle-bff-memory-pack', name: 'BFF Memory Pack: 6 Holographic Strips + 15 Pastel Polaroids', price: 449, isActive: true },
+  'prod-custom-retro-prints': { id: 'prod-custom-retro-prints', name: 'Custom Retro Prints (10 photos)', price: 179, isActive: true },
+  'prod-custom-pocket-prints': { id: 'prod-custom-pocket-prints', name: 'Mini Pocket Photos (5 photos)', price: 99, isActive: true },
+  'prod-custom-photobooth-strip': { id: 'prod-custom-photobooth-strip', name: 'Custom Photobooth Strips (3 strips)', price: 149, isActive: true }
 };
 
 export const TRUSTED_COUPONS = [
@@ -701,11 +705,38 @@ export function calculateAuthoritativeTotals(items: any[], couponCode?: string) 
   }
 
   let subtotalPaise = 0;
-  const validatedItems = [];
+  const validatedItems: any[] = [];
 
   for (const item of items) {
     if (!item || typeof item !== 'object') {
       throw new Error('Malformed order item.');
+    }
+
+    // Wall builder, split posters and mix & match packs are priced from their own
+    // configuration by the shared pricing module. The client-sent price and productId
+    // are ignored for these items.
+    if (item.builder) {
+      const priced = priceBuilder(item.builder);
+      const builderQty = parseInt(item.quantity, 10);
+      if (isNaN(builderQty) || builderQty < 1 || builderQty > 10) {
+        throw new Error(`Invalid quantity for "${priced.name}". Quantity must be between 1 and 10.`);
+      }
+      const builderUnitPaise = priced.unitPrice * 100;
+      subtotalPaise += builderUnitPaise * builderQty;
+      validatedItems.push({
+        productId: priced.productId,
+        productName: priced.name,
+        size: priced.summary,
+        finish: 'Matte, 300 GSM',
+        quantity: builderQty,
+        unitPrice: priced.unitPrice,
+        unitPricePaise: builderUnitPaise,
+        totalPrice: priced.unitPrice * builderQty,
+        totalPricePaise: builderUnitPaise * builderQty,
+        photoUrls: priced.photoUrls,
+        builder: sanitizeBuilder(item.builder),
+      });
+      continue;
     }
 
     const productId = String(item.productId || '');
@@ -827,7 +858,7 @@ apiRouter.post('/orders/validate', createRateLimiter(40, 60000, 'orders_validate
     const { items, couponCode } = req.body;
     if (Array.isArray(items)) {
       for (const item of items) {
-        if (item?.productId) {
+        if (item?.productId && !item?.builder) {
           await resolveCatalogProduct(String(item.productId));
         }
       }
@@ -944,7 +975,7 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
     // Pre-resolve all products authoritatively from catalog / Firestore
     if (Array.isArray(items)) {
       for (const item of items) {
-        if (item?.productId) {
+        if (item?.productId && !item?.builder) {
           const resolved = await resolveCatalogProduct(String(item.productId));
           if (!resolved) {
             return res.status(400).json({
@@ -994,9 +1025,12 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       },
       items: calculated.items.map((it, idx) => {
         const clientPhotos = items[idx]?.photoUrls || items[idx]?.photos;
-        const photoUrls = Array.isArray(clientPhotos) && clientPhotos.length > 0
-          ? clientPhotos
-          : [items[idx]?.previewThumbnail || 'https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=800'];
+        const isBuilder = !!(it as any).builder;
+        const photoUrls = isBuilder
+          ? ((it as any).photoUrls as string[])
+          : Array.isArray(clientPhotos) && clientPhotos.length > 0
+            ? clientPhotos
+            : [items[idx]?.previewThumbnail || 'https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=800'];
         return {
           productId: it.productId,
           productName: it.productName,
@@ -1008,6 +1042,7 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
           photoUrls,
           caption: it.caption,
           notes: it.notes,
+          ...(isBuilder ? { builder: (it as any).builder } : {}),
         };
       }),
       itemsCount: calculated.items.reduce((sum, it) => sum + it.quantity, 0),
