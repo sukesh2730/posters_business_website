@@ -37,6 +37,19 @@ const db = fbApp && firebaseConfig?.firestoreDatabaseId
   : null;
 
 // ----------------------------------------------------
+// ----------------------------------------------------
+// Environment mode: secure by default
+// ----------------------------------------------------
+// Anything that is not explicitly development or test is treated as production, so a
+// deployment that forgets to set NODE_ENV can no longer expose the test-auth header or
+// fall back to a known secret. Local dev: `npm run dev` passes --dev.
+const isTestEnv = process.env.NODE_ENV === 'test';
+const isDevMode = isTestEnv || process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+const isProduction = !isDevMode;
+// x-test-auth headers and unsigned guest ids are accepted ONLY under automated tests,
+// or locally when ALLOW_TEST_AUTH=true is set with --dev. Never in production.
+const testAuthEnabled = isTestEnv || (isDevMode && process.env.ALLOW_TEST_AUTH === 'true');
+
 // Cache & Local Storage Directory Setup
 // ----------------------------------------------------
 const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads');
@@ -45,7 +58,7 @@ try {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 } catch (err) {
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     console.warn('Notice: public/uploads folder creation:', err);
   }
 }
@@ -65,7 +78,18 @@ const mediaHashCache = new Map<string, string>();
 // ----------------------------------------------------
 // Cryptographic Secrets & Signed URL Engine
 // ----------------------------------------------------
-const SERVER_SECRET = process.env.SESSION_SECRET || 'memoprint_secure_image_hmac_secret_2026_prod';
+const SERVER_SECRET: string = (() => {
+  const configured = process.env.SESSION_SECRET;
+  if (configured && configured.length >= 24) return configured;
+  if (isProduction) {
+    throw new Error(
+      'SESSION_SECRET is missing or shorter than 24 characters. Set it in your hosting environment. ' +
+        'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+  console.warn('SESSION_SECRET not set: using a random secret for this run (signed links reset on restart).');
+  return crypto.randomBytes(32).toString('hex');
+})();
 
 export function generateSignedImageToken(mediaId: string, uploadedBy: string, expiresInMs = 7 * 24 * 60 * 60 * 1000): { token: string; expires: number } {
   const expires = Date.now() + expiresInMs;
@@ -266,12 +290,11 @@ function checkRateLimit(ip: string, limit: number, windowMs: number): { allowed:
   return { allowed: true, retryAfter: 0 };
 }
 
-const isProduction = process.env.NODE_ENV === 'production';
 
 export function createRateLimiter(limit: number, windowMs = 60000, label = 'general') {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
     // Skip rate limiting ONLY in non-production automated tests
-    if (!isProduction && (req.headers['x-test-auth'] || process.env.NODE_ENV === 'test')) {
+    if (testAuthEnabled) {
       return next();
     }
 
@@ -344,7 +367,7 @@ export const TRUSTED_COUPONS = [
 // ----------------------------------------------------
 export async function verifyRequestAuth(req: express.Request): Promise<AuthenticatedUser | null> {
   // Test authentication headers are strictly disabled in production environments
-  if (!isProduction) {
+  if (testAuthEnabled) {
     const testHeader = req.headers['x-test-auth'];
     const testAuth = Array.isArray(testHeader) ? testHeader[0] : testHeader;
     if (testAuth) {
@@ -383,7 +406,7 @@ export async function verifyRequestAuth(req: express.Request): Promise<Authentic
           }
         }
       } catch (err) {
-        if (process.env.NODE_ENV !== 'production') {
+        if (!isProduction) {
           console.warn('ID token verification error:', err);
         }
       }
@@ -405,7 +428,7 @@ export async function verifyRequestAuth(req: express.Request): Promise<Authentic
       };
     }
     // In automated non-production tests or dev environment, allow test guest sessions
-    if (!isProduction) {
+    if (testAuthEnabled) {
       return {
         uid: `guest_${rawGuest.trim().slice(0, 36)}`,
         email: null,
@@ -997,9 +1020,11 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
     const orderId = req.body.id && typeof req.body.id === 'string' && /^mp_[a-zA-Z0-9_]+$/.test(req.body.id)
       ? req.body.id
       : `mp_${Date.now()}_${safeRandom}`;
-    const orderNumber = req.body.orderNumber && typeof req.body.orderNumber === 'string' && /^MP-\d{6}$/.test(req.body.orderNumber)
-      ? req.body.orderNumber
-      : `MP-${Math.floor(100000 + Math.random() * 900000)}`;
+    // Order numbers are always generated here (never taken from the client, so nobody can
+    // pick or collide with another customer's number): MP-YYMMDD + 4 random digits.
+    const now = new Date();
+    const yymmdd = `${String(now.getUTCFullYear()).slice(2)}${String(now.getUTCMonth() + 1).padStart(2, '0')}${String(now.getUTCDate()).padStart(2, '0')}`;
+    const orderNumber = `MP-${yymmdd}${crypto.randomInt(1000, 10000)}`;
 
     // Build the Authoritative Order Entity:
     // - paymentMethod: 'cod' ONLY
@@ -1600,7 +1625,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 async function startServer() {
-  const isDev = process.env.NODE_ENV !== 'production';
+  const isDev = isDevMode;
 
   if (isDev) {
     const { createServer } = await import('vite');

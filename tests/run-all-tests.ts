@@ -22,7 +22,7 @@ const results: Array<{ name: string; status: 'PASS' | 'FAIL'; error?: string }> 
 for (const suite of testSuites) {
   process.stdout.write(`Executing: ${suite.name}... `);
   try {
-    execSync(`npx tsx ${suite.script}`, { stdio: 'pipe' });
+    execSync(`npx tsx ${suite.script}`, { stdio: 'pipe', env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' } });
     console.log('✅ PASS');
     results.push({ name: suite.name, status: 'PASS' });
   } catch (err: any) {
