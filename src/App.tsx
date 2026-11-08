@@ -138,6 +138,29 @@ function MainApp() {
     setRouteParam(undefined);
   };
 
+  // Page titles for browser tabs, history and sharing.
+  useEffect(() => {
+    const titles: Record<string, string> = {
+      home: 'MemoPrint - Personalized Photo Products & Gifts India',
+      collections: 'Collections',
+      catalog: 'Shop prints and gifts',
+      'wall-builder': 'Build your wall',
+      'split-builder': 'Split posters',
+      'mix-match': 'Mix and match posters',
+      checkout: 'Checkout',
+      'order-success': 'Order placed',
+      account: 'My orders',
+      contact: 'Contact us',
+      faq: 'FAQ',
+      'privacy-policy': 'Privacy policy',
+      'shipping-policy': 'Shipping policy',
+      'cancellation-refund': 'Cancellation and refunds',
+      terms: 'Terms of service',
+    };
+    const base = currentRoute === 'customize' ? selectedProduct.name : titles[currentRoute] || 'MemoPrint';
+    document.title = base.includes('MemoPrint') ? base : `${base} | MemoPrint`;
+  }, [currentRoute, selectedProduct]);
+
   const handleSelectProduct = (product: Product) => {
     setSelectedProduct(product);
     setCurrentRoute('customize');

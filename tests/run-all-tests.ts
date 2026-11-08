@@ -10,6 +10,8 @@ const testSuites = [
   { name: 'P0/P1 Security & Persistence Verification', script: 'tests/p0-p1-fixes-verification.test.ts' },
   { name: 'Bulk Product Editor Verification', script: 'tests/bulk-editor-verification.test.ts' },
   { name: 'Wall, Split and Mix & Match Builders', script: 'tests/print-builders.test.ts' },
+  { name: 'Server Hardening Helpers', script: 'tests/hardening.test.ts' },
+  { name: 'Server Integration (production defaults)', script: 'tests/server-integration.test.ts' },
 ];
 
 console.log('======================================================================');

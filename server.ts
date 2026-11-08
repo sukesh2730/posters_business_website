@@ -5,6 +5,15 @@ import crypto from 'crypto';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { priceBuilder, sanitizeBuilder } from './src/shared/printPricing';
+import {
+  BoundedMap,
+  BoundedMediaCache,
+  normalizeCatalogPrice,
+  orderIdFromIdempotencyKey,
+  sanitizeClientPhotoUrls,
+  stripUndefined,
+  withTimeout,
+} from './server/hardening';
 
 export interface AuthenticatedUser {
   uid: string;
@@ -72,8 +81,12 @@ interface CachedMedia {
   visibility: 'public' | 'private';
   uploadedBy: string;
 }
-const mediaMemoryCache = new Map<string, CachedMedia>();
-const mediaHashCache = new Map<string, string>();
+// Bounded so uploads can never exhaust memory; images are always stored durably first,
+// so evicting an entry only means the next request reloads it from storage.
+const MEDIA_CACHE_MAX_BYTES = Math.max(8, Number(process.env.MEDIA_CACHE_MAX_MB) || 128) * 1024 * 1024;
+const mediaMemoryCache = new BoundedMediaCache<CachedMedia>(MEDIA_CACHE_MAX_BYTES);
+const mediaHashCache = new BoundedMap<string, string>(5000);
+const ORDER_WRITE_TIMEOUT_MS = Number(process.env.ORDER_WRITE_TIMEOUT_MS) || 12000;
 
 // ----------------------------------------------------
 // Cryptographic Secrets & Signed URL Engine
@@ -298,7 +311,9 @@ export function createRateLimiter(limit: number, windowMs = 60000, label = 'gene
       return next();
     }
 
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    // req.ip honours only the trusted proxy hops (see trust proxy), so a client cannot
+    // dodge the limit by sending its own X-Forwarded-For header.
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     const key = `${label}:${clientIp}`;
     const result = checkRateLimit(key, limit, windowMs);
 
@@ -503,10 +518,16 @@ export async function resolveCatalogProduct(productId: string): Promise<{ id: st
       const snap = await getDoc(doc(db, 'products', cleanId));
       if (snap.exists()) {
         const data = snap.data();
+        const goodPrice = normalizeCatalogPrice(data.price);
+        if (goodPrice === null) {
+          // A product without a valid price cannot be sold; never guess one.
+          logSecurityEvent('CATALOG_PRODUCT_INVALID_PRICE', { productId: cleanId });
+          return null;
+        }
         const resolved = {
           id: snap.id,
           name: data.name || 'Custom Photo Print',
-          price: typeof data.price === 'number' ? data.price : (Number(data.price) || 349),
+          price: goodPrice,
           isActive: data.isActive !== false,
         };
         DYNAMIC_CATALOG[cleanId] = resolved;
@@ -528,10 +549,12 @@ async function syncFirestoreCatalog() {
     const snap = await getDocs(collection(db, 'products'));
     snap.forEach((d) => {
       const data = d.data();
+      const goodPrice = normalizeCatalogPrice(data.price);
+      if (goodPrice === null) return;
       DYNAMIC_CATALOG[d.id] = {
         id: d.id,
         name: data.name || 'Custom Photo Print',
-        price: typeof data.price === 'number' ? data.price : (Number(data.price) || 349),
+        price: goodPrice,
         isActive: data.isActive !== false,
       };
     });
@@ -1014,12 +1037,16 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
 
     // Caller Authentication (Optional for guest checkouts, verified if token provided)
     const authUser = await verifyRequestAuth(req);
-    const userId = authUser ? authUser.uid : (req.body.userId || `guest_${cleanPhone.slice(-6)}_${Date.now()}`);
+    // Never trust a user id sent by the browser: it is either the verified account, or a fresh guest id.
+    const userId = authUser ? authUser.uid : `guest_${cleanPhone.slice(-6)}_${Date.now()}`;
 
-    const safeRandom = crypto.randomBytes(4).toString('hex');
-    const orderId = req.body.id && typeof req.body.id === 'string' && /^mp_[a-zA-Z0-9_]+$/.test(req.body.id)
-      ? req.body.id
-      : `mp_${Date.now()}_${safeRandom}`;
+    // Order ids are generated here. With an Idempotency-Key the id is derived from it, so a
+    // retry after a timeout rewrites the same order instead of creating a duplicate. Ids sent
+    // by the browser are ignored (they could be used to overwrite someone else's order).
+    const orderId =
+      idempotencyKey && typeof idempotencyKey === 'string' && idempotencyKey.trim()
+        ? orderIdFromIdempotencyKey(idempotencyKey)
+        : `mp_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
     // Order numbers are always generated here (never taken from the client, so nobody can
     // pick or collide with another customer's number): MP-YYMMDD + 4 random digits.
     const now = new Date();
@@ -1049,13 +1076,13 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
         deliveryNotes: shippingAddress.deliveryNotes ? String(shippingAddress.deliveryNotes).trim().slice(0, 300) : undefined,
       },
       items: calculated.items.map((it, idx) => {
-        const clientPhotos = items[idx]?.photoUrls || items[idx]?.photos;
         const isBuilder = !!(it as any).builder;
+        const clientPhotos = sanitizeClientPhotoUrls(items[idx]?.photoUrls || items[idx]?.photos);
         const photoUrls = isBuilder
           ? ((it as any).photoUrls as string[])
-          : Array.isArray(clientPhotos) && clientPhotos.length > 0
+          : clientPhotos.length > 0
             ? clientPhotos
-            : [items[idx]?.previewThumbnail || 'https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=800'];
+            : ['https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=800'];
         return {
           productId: it.productId,
           productName: it.productName,
@@ -1089,17 +1116,25 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       updatedAt: new Date().toISOString(),
     };
 
-    // Persist to Cloud Firestore
-    if (db) {
-      try {
-        const orderRef = doc(db, 'orders', orderId);
-        await setDoc(orderRef, finalOrder);
-      } catch (dbErr: any) {
-        logSecurityEvent('ORDER_FIRESTORE_WRITE_ERROR', { orderId, error: dbErr.message });
-      }
+    // Persist to Cloud Firestore. The order is only confirmed to the customer once it is
+    // really saved: a failed or timed-out save returns an error (and is never cached as done).
+    if (!db) {
+      return res.status(503).json({ error: 'Order storage is unavailable. Please try again in a moment.' });
+    }
+    try {
+      await withTimeout(
+        setDoc(doc(db, 'orders', orderId), stripUndefined(finalOrder)),
+        ORDER_WRITE_TIMEOUT_MS,
+        'Saving the order timed out.'
+      );
+    } catch (dbErr: any) {
+      logSecurityEvent('ORDER_FIRESTORE_WRITE_ERROR', { orderId, error: dbErr.message });
+      return res.status(503).json({
+        error: 'We could not save your order just now. You have not been charged. Please try again.',
+      });
     }
 
-    // Cache in idempotency store
+    // Cache in idempotency store (only after a successful save)
     if (idempotencyKey && typeof idempotencyKey === 'string') {
       idempotencyOrderMap.set(idempotencyKey.trim(), {
         order: finalOrder,
@@ -1530,6 +1565,8 @@ apiRouter.head('/images/:id', async (req, res) => {
 // App Server Setup
 // ----------------------------------------------------
 const app = express();
+// Number of reverse proxies in front of the app (Cloud Run / most hosts: 1). Set to 0 if none.
+app.set('trust proxy', Number.isFinite(Number(process.env.TRUST_PROXY_HOPS)) && process.env.TRUST_PROXY_HOPS !== undefined ? Number(process.env.TRUST_PROXY_HOPS) : 1);
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '25mb' }));
@@ -1637,18 +1674,20 @@ async function startServer() {
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get('*', (_req, res) => {
+      app.use(express.static(distPath, { index: false }));
+      app.get('*', (req, res) => {
         const indexHtml = path.join(distPath, 'index.html');
-        if (fs.existsSync(indexHtml)) {
-          res.sendFile(indexHtml);
-        } else {
-          res.status(200).send('MemoPrint App is starting up.');
+        if (!fs.existsSync(indexHtml)) {
+          return res.status(200).send('MemoPrint App is starting up. Run "npm run build" first.');
         }
+        // Share previews need absolute URLs: use SITE_URL if set, else this request's origin.
+        const siteUrl = (process.env.SITE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+        const html = fs.readFileSync(indexHtml, 'utf8').split('__SITE_URL__').join(siteUrl);
+        res.type('html').send(html);
       });
     } else {
       app.get('*', (_req, res) => {
-        res.status(200).send('MemoPrint App is starting up.');
+        res.status(200).send('MemoPrint App is starting up. Run "npm run build" first.');
       });
     }
   }
