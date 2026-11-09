@@ -29,12 +29,14 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), DATA_STORE: 'memory', ALLOW_TEST_AUTH: 'true', SESSION_SECRET: 'integration-test-secret-0123456789' };
   delete env.NODE_ENV;
-  const child = spawn('npx', ['tsx', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
+    let errOut = '';
+    child.stderr.on('data', (d) => { errOut += String(d); });
     child.stdout.on('data', (d) => { if (String(d).includes('running on')) { clearTimeout(t); resolve(); } });
-    child.on('exit', (c) => reject(new Error('server exited early: ' + c)));
+    child.on('exit', (c) => reject(new Error('server exited early: ' + c + (errOut ? '\n' + errOut : ''))));
   });
 
   console.log('Server on the in-memory data store');
@@ -112,7 +114,7 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
     assert.equal(crypto.createHash('sha256').update(back).digest('hex'), crypto.createHash('sha256').update(bytes).digest('hex'));
   });
 
-  child.kill('SIGTERM');
+  child.kill('SIGKILL');
   console.log(`\n${passed} passed`);
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e.message); process.exit(1); });

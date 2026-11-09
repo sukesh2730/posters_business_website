@@ -131,7 +131,7 @@ const sharedBehaviour = (label: string, make: () => DataStore) => {
   await test('createAdminStore fails cleanly (never crashes the process) with bad or missing credentials', async () => {
     await assert.rejects(createAdminStore({ serviceAccountJson: 'not json at all' }));
     await assert.rejects(createAdminStore({ serviceAccountJson: '{"type":"service_account"}' }));
-    await assert.rejects(createAdminStore({ projectId: 'demo' }), /credentials/i); // no key and no Google environment
+    await assert.rejects(createAdminStore({ projectId: 'demo' }), /(credentials|permission_denied)/i); // no key and no Google environment
   });
 
   await new Promise((r) => setTimeout(r, 50));

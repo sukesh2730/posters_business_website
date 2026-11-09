@@ -20,12 +20,14 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), SESSION_SECRET: 'integration-test-secret-0123456789', ORDER_WRITE_TIMEOUT_MS: '3000' };
   delete env.NODE_ENV; delete env.ALLOW_TEST_AUTH;
-  const child = spawn('npx', ['tsx', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
+    let errOut = '';
+    child.stderr.on('data', (d) => { errOut += String(d); });
     child.stdout.on('data', (d) => { if (String(d).includes('running on')) { clearTimeout(t); resolve(); } });
-    child.on('exit', (c) => reject(new Error('server exited early: ' + c)));
+    child.on('exit', (c) => reject(new Error('server exited early: ' + c + (errOut ? '\n' + errOut : ''))));
   });
 
   console.log('Server integration (production defaults)');
@@ -114,7 +116,7 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
     });
   } else console.log('  skip page tests (run npm run build first)');
 
-  child.kill('SIGTERM');
+  child.kill('SIGKILL');
   console.log(`\n${passed} passed`);
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e.message); process.exit(1); });

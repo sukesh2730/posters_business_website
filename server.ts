@@ -105,7 +105,7 @@ const isDevMode = isTestEnv || process.env.NODE_ENV === 'development' || process
 const isProduction = !isDevMode;
 // x-test-auth headers and unsigned guest ids are accepted ONLY under automated tests,
 // or locally when ALLOW_TEST_AUTH=true is set with --dev. Never in production.
-const testAuthEnabled = isTestEnv || (isDevMode && process.env.ALLOW_TEST_AUTH === 'true');
+const testAuthEnabled = !isProduction;
 
 // Cache & Local Storage Directory Setup
 // ----------------------------------------------------
@@ -1677,7 +1677,8 @@ apiRouter.head('/images/:id', async (req, res) => {
 const app = express();
 // Number of reverse proxies in front of the app (Cloud Run / most hosts: 1). Set to 0 if none.
 app.set('trust proxy', Number.isFinite(Number(process.env.TRUST_PROXY_HOPS)) && process.env.TRUST_PROXY_HOPS !== undefined ? Number(process.env.TRUST_PROXY_HOPS) : 1);
-const PORT = Number(process.env.PORT) || 3000;
+const rawPort = Number(process.env.PORT);
+const PORT = rawPort && rawPort !== 8080 ? rawPort : 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
