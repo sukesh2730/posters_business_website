@@ -29,8 +29,12 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), DATA_STORE: 'memory', ALLOW_TEST_AUTH: 'true', SESSION_SECRET: 'integration-test-secret-0123456789' };
   delete env.NODE_ENV;
-  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
+  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const killChild = () => {
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { child.kill('SIGKILL'); } catch {}
+  };
+  process.on('exit', killChild);
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
     let errOut = '';
@@ -114,7 +118,7 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
     assert.equal(crypto.createHash('sha256').update(back).digest('hex'), crypto.createHash('sha256').update(bytes).digest('hex'));
   });
 
-  child.kill('SIGKILL');
+  killChild();
   console.log(`\n${passed} passed`);
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e.message); process.exit(1); });

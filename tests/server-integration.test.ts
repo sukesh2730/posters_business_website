@@ -20,8 +20,12 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), SESSION_SECRET: 'integration-test-secret-0123456789', ORDER_WRITE_TIMEOUT_MS: '3000' };
   delete env.NODE_ENV; delete env.ALLOW_TEST_AUTH;
-  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
+  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const killChild = () => {
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { child.kill('SIGKILL'); } catch {}
+  };
+  process.on('exit', killChild);
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
     let errOut = '';
@@ -116,7 +120,7 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
     });
   } else console.log('  skip page tests (run npm run build first)');
 
-  child.kill('SIGKILL');
+  killChild();
   console.log(`\n${passed} passed`);
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e.message); process.exit(1); });
