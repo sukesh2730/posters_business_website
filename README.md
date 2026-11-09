@@ -48,6 +48,15 @@ SESSION_SECRET=<32+ random characters> npm start
 - Photo links must be durable (`/api/images/...` or `https://`). `blob:`, `data:` and `javascript:` links are rejected.
 - Admin access requires a verified Firebase account listed in the admin check.
 
+## Print files for builder orders
+
+In the admin orders table, every wall, mix-and-match pack and split poster has a **Print files** button. It builds a ZIP in the admin's browser (nothing is uploaded) containing:
+
+- one JPEG per poster or panel at **300 dpi** at its printed size (A5, A4, A3, 13 x 19 in; landscape slots are rotated),
+- `packing-sheet.txt` listing every file, its size, its design or customer photo, and where each panel goes.
+
+Customer photos are centre-cropped to fit (split posters keep the position the customer chose). If a customer's photo is too small for the size they ordered, the sheet starts with a **WARNING** and the effective dpi. The built-in vector designs are redrawn at full resolution for every panel, so they stay sharp.
+
 ## Admin mode (recommended for production)
 
 The server can talk to Firebase in two ways. **Admin mode** (Firebase Admin SDK) is what you want in production. The older **client mode** is a fallback.
@@ -78,6 +87,8 @@ The server can talk to Firebase in two ways. **Admin mode** (Firebase Admin SDK)
 - `tests/store.test.ts` the database layer (memory and Admin backends, with a faithful stand-in for Firestore)
 - `tests/store-integration.test.ts` the real server end to end: saving orders, retries, one-time coupons, order limits, 10 MB photos
 - `tests/server-integration.test.ts` the server started the way a careless deploy would, with only `SESSION_SECRET`
+- `tests/print-export.test.ts` print-file sizing (300 dpi panels for every set and size)
+- `tests/browser/*.py` optional browser checks of the print export (Python Playwright; see the header of each file)
 
 Older suites (`cod-security`, `comprehensive-security-and-gst`, `p0-p1-fixes`, `qa-audit`) talk to the live Firestore and need internet access.
 
