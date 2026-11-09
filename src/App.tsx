@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { setUploadLimits } from './utils/imageOptimization';
 import { AuthProvider, useAuth } from './services/authContext';
 import { CartProvider, useCart } from './services/cartContext';
 import { Navbar } from './components/Navbar';
@@ -137,6 +138,14 @@ function MainApp() {
     setCurrentRoute(routeStr);
     setRouteParam(undefined);
   };
+
+  // Ask the server how large an upload it accepts (bigger when image files live in Cloud Storage).
+  useEffect(() => {
+    fetch('/api/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => c && setUploadLimits(c))
+      .catch(() => {});
+  }, []);
 
   // Page titles for browser tabs, history and sharing.
   useEffect(() => {

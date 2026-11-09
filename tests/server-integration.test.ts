@@ -21,6 +21,7 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), SESSION_SECRET: 'integration-test-secret-0123456789', ORDER_WRITE_TIMEOUT_MS: '3000' };
   delete env.NODE_ENV; delete env.ALLOW_TEST_AUTH;
   const child = spawn('npx', ['tsx', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
     child.stdout.on('data', (d) => { if (String(d).includes('running on')) { clearTimeout(t); resolve(); } });
@@ -28,6 +29,12 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
   });
 
   console.log('Server integration (production defaults)');
+
+  await test('starts without Google credentials and reports the fallback store', async () => {
+    const h: any = await (await fetch(BASE + '/api/health')).json();
+    assert.equal(h.ok, true);
+    assert.equal(h.store, 'client');
+  });
 
   await test('test-auth admin header is rejected when NODE_ENV is unset', async () => {
     const r = await fetch(BASE + '/api/admin/verify', { headers: { 'x-test-auth': 'admin' } });

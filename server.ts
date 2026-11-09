@@ -14,6 +14,7 @@ import {
   stripUndefined,
   withTimeout,
 } from './server/hardening';
+import { AdminStore, ClientStore, DataStore, MemoryStore, createAdminStore } from './server/store';
 
 export interface AuthenticatedUser {
   uid: string;
@@ -44,6 +45,53 @@ const fbApp = firebaseConfig
 const db = fbApp && firebaseConfig?.firestoreDatabaseId
   ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
   : null;
+
+// ----------------------------------------------------
+// Data store (Admin SDK in production, see server/store.ts)
+// ----------------------------------------------------
+const MAX_FIRESTORE_DOC_IMAGE_BYTES = 700 * 1024; // image bytes that fit inside a Firestore document
+const MAX_BLOB_IMAGE_BYTES = 10 * 1024 * 1024; // allowed when files live in Cloud Storage
+const MAX_ORDERS_PER_CONTACT_PER_HOUR = 5;
+let store: DataStore = new ClientStore({ db, doc, getDoc, setDoc, updateDoc, getDocs, collection });
+export function setDataStore(next: DataStore) {
+  store = next;
+}
+export function getDataStore() {
+  return store;
+}
+
+// A background failure inside a library (for example a network blip in the database client) must
+// not take the whole store offline. Log it with the audit logger instead of crashing.
+process.on('unhandledRejection', (reason: any) => {
+  logSecurityEvent('UNHANDLED_REJECTION', { error: String(reason?.message || reason).slice(0, 300) });
+});
+
+async function initDataStore() {
+  if (process.env.DATA_STORE === 'memory' && !isProduction) {
+    store = new MemoryStore();
+    console.warn('Data store: IN-MEMORY (development/testing only; nothing is saved to disk).');
+    return;
+  }
+  if (process.env.DATA_STORE === 'client') {
+    console.warn('Data store: browser-style Firebase SDK (DATA_STORE=client).');
+    return;
+  }
+  try {
+    store = await createAdminStore({
+      projectId: firebaseConfig?.projectId,
+      databaseId: firebaseConfig?.firestoreDatabaseId,
+      storageBucket: firebaseConfig?.storageBucket,
+      serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+    });
+    console.log(`Data store: Firebase Admin SDK (file storage ${store.supportsBlobs ? 'enabled' : 'unavailable, images stay in Firestore'}).`);
+  } catch (err: any) {
+    console.warn(
+      `Data store: Admin SDK unavailable (${String(err?.message || err).slice(0, 140)}). ` +
+        'Using the browser-style SDK. One-time coupons, shared rate limits and large image storage are OFF, ' +
+        'and the server-only Firestore rules must NOT be deployed. See README "Admin mode".'
+    );
+  }
+}
 
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -232,7 +280,18 @@ export interface AuthoritativeMediaMetadata {
   sizeBytes: number;
 }
 
-export async function getAuthoritativeMediaMetadata(mediaId: string): Promise<AuthoritativeMediaMetadata | null> {
+export /** Image bytes from wherever they are durably kept: a Storage file, or base64 inside the document. */
+async function loadMediaBytes(mediaId: string): Promise<Buffer | null> {
+  try {
+    const d = await store.getDoc('media_assets', mediaId);
+    if (!d) return null;
+    if (d.storagePath) return await store.getBlob(d.storagePath);
+    if (d.data) return Buffer.from(d.data, 'base64');
+  } catch {}
+  return null;
+}
+
+async function getAuthoritativeMediaMetadata(mediaId: string): Promise<AuthoritativeMediaMetadata | null> {
   const cached = mediaMemoryCache.get(mediaId);
   if (cached) {
     return {
@@ -245,34 +304,31 @@ export async function getAuthoritativeMediaMetadata(mediaId: string): Promise<Au
     };
   }
 
-  if (db) {
-    try {
-      const docSnap = await getDoc(doc(db, 'media_assets', mediaId));
-      if (docSnap.exists()) {
-        const d = docSnap.data();
-        const meta: AuthoritativeMediaMetadata = {
-          id: mediaId,
-          mime: d.contentType || 'image/jpeg',
-          visibility: d.visibility || 'public',
-          uploadedBy: d.uploadedBy || '',
-          fileName: d.fileName || mediaId,
-          sizeBytes: d.sizeBytes || 0,
-        };
-        if (d.data) {
-          mediaMemoryCache.set(mediaId, {
-            buffer: Buffer.from(d.data, 'base64'),
-            mime: meta.mime,
-            fileName: meta.fileName,
-            sizeBytes: meta.sizeBytes,
-            visibility: meta.visibility,
-            uploadedBy: meta.uploadedBy,
-          });
-        }
-        return meta;
+  try {
+    const d = await store.getDoc('media_assets', mediaId);
+    if (d) {
+      const meta: AuthoritativeMediaMetadata = {
+        id: mediaId,
+        mime: d.contentType || 'image/jpeg',
+        visibility: d.visibility || 'public',
+        uploadedBy: d.uploadedBy || '',
+        fileName: d.fileName || mediaId,
+        sizeBytes: d.sizeBytes || 0,
+      };
+      if (d.data) {
+        mediaMemoryCache.set(mediaId, {
+          buffer: Buffer.from(d.data, 'base64'),
+          mime: meta.mime,
+          fileName: meta.fileName,
+          sizeBytes: meta.sizeBytes,
+          visibility: meta.visibility,
+          uploadedBy: meta.uploadedBy,
+        });
       }
-    } catch (err: any) {
-      logSecurityEvent('MEDIA_METADATA_FETCH_ERROR', { mediaId, error: err.message });
+      return meta;
     }
+  } catch (err: any) {
+    logSecurityEvent('MEDIA_METADATA_FETCH_ERROR', { mediaId, error: err.message });
   }
 
   return null;
@@ -329,6 +385,30 @@ export function createRateLimiter(limit: number, windowMs = 60000, label = 'gene
   };
 }
 
+/**
+ * Same idea as createRateLimiter, but the counter lives in the shared data store so it holds
+ * across several server instances. Needs Admin mode; otherwise it does nothing (the per-instance
+ * limiter still applies). If the store is down it lets the request through.
+ */
+export function createSharedRateLimiter(limit: number, windowMs = 60000, label = 'shared') {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (testAuthEnabled || !store.supportsSharedState) return next();
+    try {
+      const r = await store.hit(`${label}:${req.ip || req.socket.remoteAddress || 'unknown'}`, windowMs, limit);
+      if (!r.allowed) {
+        res.setHeader('Retry-After', r.retryAfter);
+        return res.status(429).json({
+          error: `Too many requests to ${label}. Please wait ${r.retryAfter} seconds before retrying.`,
+          retryAfterSeconds: r.retryAfter,
+        });
+      }
+    } catch (err: any) {
+      logSecurityEvent('SHARED_RATE_LIMIT_ERROR', { label, error: err.message });
+    }
+    next();
+  };
+}
+
 // ----------------------------------------------------
 // Security & Audit Logger
 // ----------------------------------------------------
@@ -369,12 +449,12 @@ export const TRUSTED_CATALOG: Record<string, { id: string; name: string; price: 
 };
 
 export const TRUSTED_COUPONS = [
-  { code: 'FIRSTMEMO15', discountPercent: 15, maxDiscount: 300, minAmount: 299, description: '15% OFF on first order' },
+  { code: 'FIRSTMEMO15', firstOrderOnly: true, discountPercent: 15, maxDiscount: 300, minAmount: 299, description: '15% OFF on first order' },
   { code: 'MEMO20', discountPercent: 20, maxDiscount: 500, minAmount: 999, description: '20% OFF on orders above ₹999' },
   { code: 'FREESHIP', freeShipping: true, minAmount: 299, description: 'Free Shipping on orders above ₹299' },
   { code: 'MEMO10', discountPercent: 10, minAmount: 399, description: '10% OFF on orders above ₹399' },
   { code: 'MEMOLIFE', flatDiscount: 150, minAmount: 799, description: 'Flat ₹150 OFF on orders above ₹799' },
-  { code: 'WELCOME50', flatDiscount: 50, minAmount: 299, description: '₹50 OFF on your first purchase' },
+  { code: 'WELCOME50', firstOrderOnly: true, flatDiscount: 50, minAmount: 299, description: '₹50 OFF on your first purchase' },
 ];
 
 // ----------------------------------------------------
@@ -513,30 +593,27 @@ export async function resolveCatalogProduct(productId: string): Promise<{ id: st
   if (DYNAMIC_CATALOG[cleanId]) {
     return DYNAMIC_CATALOG[cleanId];
   }
-  if (db) {
-    try {
-      const snap = await getDoc(doc(db, 'products', cleanId));
-      if (snap.exists()) {
-        const data = snap.data();
-        const goodPrice = normalizeCatalogPrice(data.price);
-        if (goodPrice === null) {
-          // A product without a valid price cannot be sold; never guess one.
-          logSecurityEvent('CATALOG_PRODUCT_INVALID_PRICE', { productId: cleanId });
-          return null;
-        }
-        const resolved = {
-          id: snap.id,
-          name: data.name || 'Custom Photo Print',
-          price: goodPrice,
-          isActive: data.isActive !== false,
-        };
-        DYNAMIC_CATALOG[cleanId] = resolved;
-        return resolved;
+  try {
+    const data = await store.getDoc('products', cleanId);
+    if (data) {
+      const goodPrice = normalizeCatalogPrice(data.price);
+      if (goodPrice === null) {
+        // A product without a valid price cannot be sold; never guess one.
+        logSecurityEvent('CATALOG_PRODUCT_INVALID_PRICE', { productId: cleanId });
+        return null;
       }
-    } catch (err: any) {
-      if (!isProduction) {
-        console.warn(`Catalog lookup error for product ${cleanId}:`, err.message);
-      }
+      const resolved = {
+        id: cleanId,
+        name: data.name || 'Custom Photo Print',
+        price: goodPrice,
+        isActive: data.isActive !== false,
+      };
+      DYNAMIC_CATALOG[cleanId] = resolved;
+      return resolved;
+    }
+  } catch (err: any) {
+    if (!isProduction) {
+      console.warn(`Catalog lookup error for product ${cleanId}:`, err.message);
     }
   }
   return null;
@@ -544,15 +621,13 @@ export async function resolveCatalogProduct(productId: string): Promise<{ id: st
 
 // Background sync of Firestore products into dynamic catalog cache
 async function syncFirestoreCatalog() {
-  if (!db) return;
   try {
-    const snap = await getDocs(collection(db, 'products'));
-    snap.forEach((d) => {
-      const data = d.data();
+    const all = await store.listDocs('products');
+    all.forEach((data) => {
       const goodPrice = normalizeCatalogPrice(data.price);
       if (goodPrice === null) return;
-      DYNAMIC_CATALOG[d.id] = {
-        id: d.id,
+      DYNAMIC_CATALOG[data.id] = {
+        id: data.id,
         name: data.name || 'Custom Photo Print',
         price: goodPrice,
         isActive: data.isActive !== false,
@@ -593,12 +668,13 @@ async function saveToPersistentMediaStore(
   // Enforce durable storage boundary: Firestore document limit is 1 MiB (1,048,576 bytes).
   // A 700 KB raw binary expands to ~933 KB Base64. Combined with metadata, this guarantees
   // the document will safely fit in Firestore without corruption or truncation.
-  const MAX_STORAGE_BYTES = 700 * 1024;
+  // With file storage (Admin mode) photos can be much larger, which keeps prints sharp.
+  const MAX_STORAGE_BYTES = store.supportsBlobs ? MAX_BLOB_IMAGE_BYTES : MAX_FIRESTORE_DOC_IMAGE_BYTES;
   if (base64Buffer.length > MAX_STORAGE_BYTES) {
-    throw new Error(`File size (${(base64Buffer.length / 1024).toFixed(1)} KB) exceeds the 700 KB durable storage limit. Please optimize or compress before uploading.`);
+    throw new Error(`File size (${(base64Buffer.length / 1024).toFixed(1)} KB) exceeds the ${Math.round(MAX_STORAGE_BYTES / 1024)} KB storage limit. Please optimize or compress before uploading.`);
   }
 
-  if (base64String.length > 950000) {
+  if (!store.supportsBlobs && base64String.length > 950000) {
     throw new Error('Image base64 payload exceeds durable document persistence threshold.');
   }
 
@@ -609,14 +685,11 @@ async function saveToPersistentMediaStore(
   const dedupKey = visibility === 'public' ? `public_${computedHash}` : `${userUid || 'guest'}_${computedHash}`;
 
   // Check persistent hash deduplication in Firestore if not in memory cache
-  if (db && !mediaHashCache.has(dedupKey)) {
+  if (!mediaHashCache.has(dedupKey)) {
     try {
-      const hashSnap = await getDoc(doc(db, 'media_hashes', dedupKey));
-      if (hashSnap.exists()) {
-        const existingId = hashSnap.data().mediaId;
-        if (existingId) {
-          mediaHashCache.set(dedupKey, existingId);
-        }
+      const hashDoc = await store.getDoc('media_hashes', dedupKey);
+      if (hashDoc?.mediaId) {
+        mediaHashCache.set(dedupKey, hashDoc.mediaId);
       }
     } catch {}
   }
@@ -649,27 +722,35 @@ async function saveToPersistentMediaStore(
   // 1. DURABLE PERSISTENCE FIRST:
   // An upload must ONLY return success after it has been safely written to durable Firestore storage.
   // We NEVER return success if the image only exists in RAM, in-memory cache, or ephemeral container disk.
-  if (!db) {
-    throw new Error('Durable database storage is uninitialized. Upload cannot be safely persisted.');
-  }
-
   try {
-    const docRef = doc(db, 'media_assets', mediaId);
-    await setDoc(docRef, {
+    const record: Record<string, any> = {
       id: mediaId,
       fileName: cleanFileName,
       contentType: meta.mime,
       sizeBytes: base64Buffer.length,
-      data: base64String,
       hash: computedHash,
       uploadedBy: userUid || 'guest',
       visibility,
       createdAt: new Date().toISOString(),
-    });
+    };
+    let storedAsFile = false;
+    if (store.supportsBlobs) {
+      try {
+        const storagePath = `media/${mediaId}${meta.ext}`;
+        await store.putBlob(storagePath, base64Buffer, meta.mime);
+        record.storagePath = storagePath;
+        storedAsFile = true;
+      } catch (blobErr: any) {
+        logSecurityEvent('MEDIA_BLOB_WRITE_FAILED', { mediaId, error: blobErr.message });
+        if (base64Buffer.length > MAX_FIRESTORE_DOC_IMAGE_BYTES) throw blobErr;
+      }
+    }
+    if (!storedAsFile) record.data = base64String;
+    await store.setDoc('media_assets', mediaId, record);
 
-    // Save deduplication index in Firestore
+    // Save deduplication index
     try {
-      await setDoc(doc(db, 'media_hashes', dedupKey), {
+      await store.setDoc('media_hashes', dedupKey, {
         mediaId,
         visibility,
         uploadedBy: userUid || 'guest',
@@ -953,7 +1034,7 @@ apiRouter.post('/coupons/validate', createRateLimiter(40, 60000, 'coupons_valida
 // ----------------------------------------------------
 // 1b. Authoritative COD Order Placement (Idempotent)
 // ----------------------------------------------------
-apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (req, res) => {
+apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), createSharedRateLimiter(30, 60000, 'orders_create'), async (req, res) => {
   try {
     const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body.idempotencyKey;
     if (idempotencyKey && typeof idempotencyKey === 'string') {
@@ -961,6 +1042,18 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       if (existing) {
         logSecurityEvent('IDEMPOTENT_ORDER_SERVED', { idempotencyKey: idempotencyKey.trim(), orderId: existing.order.id });
         return res.json({ success: true, order: existing.order, idempotent: true });
+      }
+      // Another server instance (or a restart) may already have saved this order. Only trusted
+      // when reads reflect the real database: the fallback client SDK can answer from its own
+      // unsent local writes, which would wrongly report an unsaved order as saved.
+      if (store.supportsSharedState) {
+        try {
+          const saved = await store.getDoc('orders', orderIdFromIdempotencyKey(idempotencyKey));
+          if (saved) {
+            logSecurityEvent('IDEMPOTENT_ORDER_SERVED', { idempotencyKey: idempotencyKey.trim(), orderId: saved.id });
+            return res.json({ success: true, order: saved, idempotent: true });
+          }
+        } catch {}
       }
     }
 
@@ -1030,6 +1123,30 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
           }
         }
       }
+    }
+
+    // Customer history: one-time coupons and a cap on orders per customer per hour.
+    // Needs Admin mode (see README); in fallback mode these checks are skipped and logged.
+    const requestedCoupon = String(couponCode || '').trim().toUpperCase();
+    const couponDef: any = TRUSTED_COUPONS.find((c) => c.code === requestedCoupon);
+    if (store.supportsSharedState) {
+      try {
+        const prior = await store.findOrdersByContact({ email: cleanEmail || undefined, phone: cleanPhone }, 20);
+        const live = prior.filter((o) => o.orderStatus !== 'cancelled');
+        if (couponDef?.firstOrderOnly && live.length > 0) {
+          logSecurityEvent('FIRST_ORDER_COUPON_REJECTED', { coupon: requestedCoupon, phoneLast4: cleanPhone.slice(-4) });
+          return res.status(400).json({ error: `The code ${requestedCoupon} is only valid on your first order.` });
+        }
+        const recent = prior.filter((o) => Date.parse(o.createdAt) > Date.now() - 60 * 60 * 1000);
+        if (recent.length >= MAX_ORDERS_PER_CONTACT_PER_HOUR) {
+          logSecurityEvent('ORDER_VELOCITY_LIMIT', { phoneLast4: cleanPhone.slice(-4), recent: recent.length });
+          return res.status(429).json({ error: 'You have placed several orders in the last hour. Please wait a little before placing another.' });
+        }
+      } catch (err: any) {
+        logSecurityEvent('ORDER_HISTORY_LOOKUP_FAILED', { error: err.message });
+      }
+    } else if (couponDef?.firstOrderOnly) {
+      logSecurityEvent('FIRST_ORDER_COUPON_NOT_ENFORCED', { coupon: requestedCoupon, reason: `store mode ${store.mode}` });
     }
 
     // Authoritative Server Calculation of Items and Totals (Integer Paise)
@@ -1118,12 +1235,10 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
 
     // Persist to Cloud Firestore. The order is only confirmed to the customer once it is
     // really saved: a failed or timed-out save returns an error (and is never cached as done).
-    if (!db) {
-      return res.status(503).json({ error: 'Order storage is unavailable. Please try again in a moment.' });
-    }
+    let created = true;
     try {
-      await withTimeout(
-        setDoc(doc(db, 'orders', orderId), stripUndefined(finalOrder)),
+      created = await withTimeout(
+        store.createDoc('orders', orderId, stripUndefined(finalOrder)),
         ORDER_WRITE_TIMEOUT_MS,
         'Saving the order timed out.'
       );
@@ -1132,6 +1247,13 @@ apiRouter.post('/orders', createRateLimiter(30, 60000, 'orders_create'), async (
       return res.status(503).json({
         error: 'We could not save your order just now. You have not been charged. Please try again.',
       });
+    }
+    if (!created) {
+      // Same Idempotency-Key arrived twice at once and the other request won: serve its order.
+      const winner = await store.getDoc('orders', orderId).catch(() => null);
+      if (winner) {
+        return res.json({ success: true, order: winner, idempotent: true });
+      }
     }
 
     // Cache in idempotency store (only after a successful save)
@@ -1294,25 +1416,28 @@ apiRouter.get('/admin/verify', async (req, res) => {
   });
 });
 
+apiRouter.get('/health', (_req, res) => {
+  res.json({ ok: true, store: store.mode, fileStorage: store.supportsBlobs, sharedState: store.supportsSharedState });
+});
+
+// Lets the browser know how large an upload the server will accept.
+apiRouter.get('/config', (_req, res) => {
+  res.json({ maxImageBytes: store.supportsBlobs ? MAX_BLOB_IMAGE_BYTES : MAX_FIRESTORE_DOC_IMAGE_BYTES });
+});
+
 apiRouter.get('/admin/orders', async (req, res) => {
   const authUser = await verifyRequestAuth(req);
   if (!authUser || !isAuthorizedAdmin(authUser)) {
     return res.status(403).json({ error: 'Forbidden: Administrator access required.' });
   }
 
-  if (db) {
-    try {
-      const snap = await getDocs(collection(db, 'orders'));
-      const orders: any[] = [];
-      snap.forEach((d) => orders.push(d.data()));
-      orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      return res.json({ success: true, count: orders.length, orders });
-    } catch (err: any) {
-      return res.status(500).json({ error: 'Failed to retrieve orders: ' + err.message });
-    }
+  try {
+    const orders = await store.listDocs('orders');
+    orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return res.json({ success: true, count: orders.length, orders });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to retrieve orders: ' + err.message });
   }
-
-  return res.json({ success: true, orders: [] });
 });
 
 // Valid Order & Payment Status State Transitions
@@ -1349,14 +1474,9 @@ apiRouter.post('/admin/orders/:id/status', async (req, res) => {
   }
 
   let currentOrder: any = null;
-  if (db) {
-    try {
-      const snap = await getDoc(doc(db, 'orders', id));
-      if (snap.exists()) {
-        currentOrder = snap.data();
-      }
-    } catch {}
-  }
+  try {
+    currentOrder = await store.getDoc('orders', id);
+  } catch {}
 
   const updates: any = { updatedAt: new Date().toISOString() };
 
@@ -1423,17 +1543,12 @@ apiRouter.post('/admin/orders/:id/status', async (req, res) => {
   if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
   if (trackingCourier !== undefined) updates.trackingCourier = trackingCourier;
 
-  if (db) {
-    try {
-      const orderRef = doc(db, 'orders', id);
-      await updateDoc(orderRef, updates);
-      return res.json({ success: true, updated: updates });
-    } catch (e: any) {
-      return res.status(500).json({ error: 'Failed to update order status: ' + e.message });
-    }
+  try {
+    await store.updateDoc('orders', id, updates);
+    return res.json({ success: true, updated: updates });
+  } catch (e: any) {
+    return res.status(500).json({ error: 'Failed to update order status: ' + e.message });
   }
-
-  return res.json({ success: true, message: 'Status updated', updated: updates });
 });
 
 // ----------------------------------------------------
@@ -1509,14 +1624,9 @@ apiRouter.get('/images/:id', async (req, res) => {
         } catch {}
       }
     }
-    // Persistent fallback: Firestore document data
-    if (!buffer && db) {
-      try {
-        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-        if (docSnap.exists() && docSnap.data().data) {
-          buffer = Buffer.from(docSnap.data().data, 'base64');
-        }
-      } catch {}
+    // Persistent fallback: Cloud Storage file or Firestore document data
+    if (!buffer) {
+      buffer = await loadMediaBytes(cleanId);
     }
   }
 
@@ -1625,16 +1735,13 @@ app.get('/uploads/:fileName', async (req, res) => {
       return res.sendFile(diskPath, { cacheControl: false });
     }
 
-    // Fallback: load from Firestore
-    if (db) {
-      try {
-        const docSnap = await getDoc(doc(db, 'media_assets', cleanId));
-        if (docSnap.exists() && docSnap.data().data) {
-          const buffer = Buffer.from(docSnap.data().data, 'base64');
-          setMediaCacheHeaders(res, meta.visibility, meta.mime);
-          return res.send(buffer);
-        }
-      } catch {}
+    // Fallback: load from durable storage
+    {
+      const stored = await loadMediaBytes(cleanId);
+      if (stored) {
+        setMediaCacheHeaders(res, meta.visibility, meta.mime);
+        return res.send(stored);
+      }
     }
 
     return res.status(404).json({ error: 'Image file could not be read.' });
@@ -1662,6 +1769,8 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 async function startServer() {
+  await initDataStore();
+  void syncFirestoreCatalog();
   const isDev = isDevMode;
 
   if (isDev) {

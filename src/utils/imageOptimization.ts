@@ -188,6 +188,19 @@ function canvasHasTransparency(ctx: CanvasRenderingContext2D, width: number, hei
  * - Max binary payload size: < 700 KB (strictly within Firestore 1 MiB limits)
  * - Returns SHA-256 fingerprint for deduplication
  */
+// Upload limits. They start at the safe Firestore-document size and are raised when the
+// server reports that it can store image files (see setUploadLimits and /api/config).
+let maxUploadBytes = 700 * 1024;
+let defaultMaxDimension = 1920;
+
+export function setUploadLimits(limits: { maxImageBytes?: number }) {
+  const b = Number(limits.maxImageBytes);
+  if (!Number.isFinite(b) || b < 100 * 1024) return;
+  maxUploadBytes = Math.min(b, 10 * 1024 * 1024);
+  // Large-format prints (A3 at 300 dpi is ~5000 px) need more than 1920 px.
+  defaultMaxDimension = maxUploadBytes > 1024 * 1024 ? 4000 : 1920;
+}
+
 export async function optimizeImageForUpload(
   file: File,
   options?: {
@@ -197,7 +210,7 @@ export async function optimizeImageForUpload(
     onStageChange?: (stage: string) => void;
   }
 ): Promise<OptimizedImageResult> {
-  const maxDim = options?.maxDimension || 1920;
+  const maxDim = options?.maxDimension || defaultMaxDimension;
   let quality = options?.initialQuality || 0.85;
 
   options?.onStageChange?.('Optimizing image...');
@@ -276,7 +289,7 @@ export async function optimizeImageForUpload(
         };
 
         let finalBlob = await encodeBlob(quality);
-        const MAX_BYTES = 700 * 1024; // 700 KB safe limit for Firestore 1 MiB
+        const MAX_BYTES = maxUploadBytes;
 
         // If file is still too big, adaptively step down quality
         if (finalBlob.size > MAX_BYTES && targetMime === 'image/jpeg') {

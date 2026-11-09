@@ -12,6 +12,8 @@ const testSuites = [
   { name: 'Wall, Split and Mix & Match Builders', script: 'tests/print-builders.test.ts' },
   { name: 'Server Hardening Helpers', script: 'tests/hardening.test.ts' },
   { name: 'Server Integration (production defaults)', script: 'tests/server-integration.test.ts' },
+  { name: 'Data Store Backends', script: 'tests/store.test.ts' },
+  { name: 'Server on the Data Store (end to end)', script: 'tests/store-integration.test.ts' },
 ];
 
 console.log('======================================================================');

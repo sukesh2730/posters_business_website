@@ -48,9 +48,41 @@ SESSION_SECRET=<32+ random characters> npm start
 - Photo links must be durable (`/api/images/...` or `https://`). `blob:`, `data:` and `javascript:` links are rejected.
 - Admin access requires a verified Firebase account listed in the admin check.
 
+## Admin mode (recommended for production)
+
+The server can talk to Firebase in two ways. **Admin mode** (Firebase Admin SDK) is what you want in production. The older **client mode** is a fallback.
+
+| | Admin mode | Client mode (fallback) |
+| --- | --- | --- |
+| One-time first-order coupons (`FIRSTMEMO15`, `WELCOME50`) | enforced | not enforced |
+| Max 5 orders per customer per hour | yes | no |
+| Duplicate-order protection across instances/restarts | yes | per instance only |
+| Rate limit on order creation shared across instances | yes | per instance only |
+| Photos up to 10 MB (sharper A3 / wall prints) | yes, stored in Cloud Storage | 700 KB, stored inside Firestore |
+| Browsers can be blocked from creating orders directly | yes (server-only rules) | no |
+
+**How to turn it on**
+
+1. On Google Cloud (Cloud Run, AI Studio deploys) the server's own service account is used automatically. Give that service account the roles **Cloud Datastore User** and **Storage Object Admin**.
+   Anywhere else, create a service-account key (Firebase console > Project settings > Service accounts > Generate new private key) and set `FIREBASE_SERVICE_ACCOUNT_JSON` to the whole JSON.
+2. Start the server and open `/api/health`. It must show `"store":"admin"`. If it shows `"client"`, read the server log for the reason.
+3. Only then deploy `firestore.server-only.rules` as your Firestore rules. Deploying them while the server is still in client mode makes every order fail.
+4. Optional: add a Firestore TTL policy on the `expiresAt` field of the `rate_limits` collection so old counters delete themselves.
+
+## Tests
+
+`npm test` runs every suite. The new suites need no network or credentials:
+
+- `tests/print-builders.test.ts` wall, split and pack pricing and validation
+- `tests/hardening.test.ts` order-write safety, photo links, caches
+- `tests/store.test.ts` the database layer (memory and Admin backends, with a faithful stand-in for Firestore)
+- `tests/store-integration.test.ts` the real server end to end: saving orders, retries, one-time coupons, order limits, 10 MB photos
+- `tests/server-integration.test.ts` the server started the way a careless deploy would, with only `SESSION_SECRET`
+
+Older suites (`cod-security`, `comprehensive-security-and-gst`, `p0-p1-fixes`, `qa-audit`) talk to the live Firestore and need internet access.
+
 ## Known limits
 
-- Firestore rules still allow browsers to create order documents directly. Moving all writes to the Firebase Admin SDK (so the rules can say "server only") needs a service-account key and is the next hardening step.
-- Image files are stored as base64 inside Firestore documents (about 700 KB each). Firebase Storage is the better home as volume grows.
-- Rate limiting and duplicate-order protection are held in memory, so they are per instance. Use one instance, or move them to Redis/Firestore before scaling out.
-- First-order coupons (`FIRSTMEMO15`, `WELCOME50`) are not yet limited to one use per customer.
+- Client mode cannot enforce one-time coupons or shared limits (see Admin mode above).
+- Image files uploaded before Admin mode was turned on stay inside Firestore documents. They keep working; only new uploads use Cloud Storage.
+- Per-instance protections (the general 120 requests/minute limiter) are still in memory. Order creation is protected across instances in Admin mode.
