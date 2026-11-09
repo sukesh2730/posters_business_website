@@ -52,6 +52,13 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
     assert.equal(c.maxImageBytes, 10 * 1024 * 1024);
   });
 
+  await test('the admin test header is refused when the request arrives through a proxy', async () => {
+    // A real internet request reaches a dev server through a proxy, which adds X-Forwarded-For.
+    const r = await fetch(BASE + '/api/admin/verify', { headers: { ...ADMIN, 'X-Forwarded-For': '203.0.113.7' } });
+    assert.equal(r.status, 403);
+    assert.equal((await fetch(BASE + '/api/admin/verify', { headers: ADMIN })).status, 200); // local call still works
+  });
+
   await test('an order is really saved (no undefined fields reach the database)', async () => {
     const key = 'save-' + Date.now();
     const r = await place('9000000011', { id: 'mp_attacker_id', userId: 'victim', orderNumber: 'MP-000001' }, key);

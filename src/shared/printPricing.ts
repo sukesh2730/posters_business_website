@@ -150,6 +150,20 @@ export const WALL_LAYOUTS: WallLayout[] = [
     ],
   },
   {
+    id: 'grid-compact',
+    name: 'Compact 3×3 Grid',
+    blurb: 'Nine matching posters in a tidy square.',
+    posterCount: 9,
+    wallSize: '3.2 × 3.2 ft',
+    price: 499,
+    mrp: 899,
+    rows: [
+      ['A4', 'A4', 'A4'],
+      ['A4', 'A4', 'A4'],
+      ['A4', 'A4', 'A4'],
+    ],
+  },
+  {
     id: 'trio',
     name: 'Trio XL Wall',
     blurb: 'Forty posters. Fills a whole wall. Best value.',
