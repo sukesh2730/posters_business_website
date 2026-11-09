@@ -1677,8 +1677,19 @@ apiRouter.head('/images/:id', async (req, res) => {
 const app = express();
 // Number of reverse proxies in front of the app (Cloud Run / most hosts: 1). Set to 0 if none.
 app.set('trust proxy', Number.isFinite(Number(process.env.TRUST_PROXY_HOPS)) && process.env.TRUST_PROXY_HOPS !== undefined ? Number(process.env.TRUST_PROXY_HOPS) : 1);
-const rawPort = Number(process.env.PORT);
-const PORT = rawPort && rawPort !== 8080 ? rawPort : 3000;
+function resolvePort(): number {
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    const p = parseInt(process.argv[portArgIdx + 1], 10);
+    if (!isNaN(p) && p > 0) return p;
+  }
+  if (process.env.PORT) {
+    const p = parseInt(process.env.PORT, 10);
+    if (!isNaN(p) && p > 0) return p;
+  }
+  return 3000;
+}
+const PORT = resolvePort();
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
