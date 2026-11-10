@@ -105,7 +105,16 @@ const isDevMode = isTestEnv || process.env.NODE_ENV === 'development' || process
 const isProduction = !isDevMode;
 // x-test-auth headers and unsigned guest ids are accepted ONLY under automated tests,
 // or locally when ALLOW_TEST_AUTH=true is set with --dev. Never in production.
-const testAuthEnabled = isTestEnv || (isDevMode && process.env.ALLOW_TEST_AUTH === 'true');
+// Test logins exist only on development/test servers AND only for requests that come from this very
+// machine (loopback, not through a proxy). A dev server reached from the internet (for example an
+// AI Studio preview that shares your real database) can therefore never be taken over with a header.
+const testAuthMode = !isProduction;
+function isLoopbackRequest(req: express.Request): boolean {
+  const addr = req.socket?.remoteAddress || '';
+  const loopback = addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  return loopback && !req.headers['x-forwarded-for'] && !req.headers['forwarded'] && !req.headers['x-real-ip'];
+}
+const testAuthAllowed = (req: express.Request): boolean => testAuthMode && isLoopbackRequest(req);
 
 // Cache & Local Storage Directory Setup
 // ----------------------------------------------------
@@ -362,8 +371,8 @@ function checkRateLimit(ip: string, limit: number, windowMs: number): { allowed:
 
 export function createRateLimiter(limit: number, windowMs = 60000, label = 'general') {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    // Skip rate limiting ONLY in non-production automated tests
-    if (testAuthEnabled) {
+    // Skip rate limiting ONLY for local automated tests
+    if (testAuthAllowed(req)) {
       return next();
     }
 
@@ -392,7 +401,7 @@ export function createRateLimiter(limit: number, windowMs = 60000, label = 'gene
  */
 export function createSharedRateLimiter(limit: number, windowMs = 60000, label = 'shared') {
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (testAuthEnabled || !store.supportsSharedState) return next();
+    if (testAuthAllowed(req) || !store.supportsSharedState) return next();
     try {
       const r = await store.hit(`${label}:${req.ip || req.socket.remoteAddress || 'unknown'}`, windowMs, limit);
       if (!r.allowed) {
@@ -461,8 +470,8 @@ export const TRUSTED_COUPONS = [
 // Authentication Verification
 // ----------------------------------------------------
 export async function verifyRequestAuth(req: express.Request): Promise<AuthenticatedUser | null> {
-  // Test authentication headers are strictly disabled in production environments
-  if (testAuthEnabled) {
+  // Test authentication headers are accepted only from this machine on dev/test servers
+  if (testAuthAllowed(req)) {
     const testHeader = req.headers['x-test-auth'];
     const testAuth = Array.isArray(testHeader) ? testHeader[0] : testHeader;
     if (testAuth) {
@@ -522,8 +531,8 @@ export async function verifyRequestAuth(req: express.Request): Promise<Authentic
         emailVerified: false,
       };
     }
-    // In automated non-production tests or dev environment, allow test guest sessions
-    if (testAuthEnabled) {
+    // In local automated tests, allow unsigned test guest sessions
+    if (testAuthAllowed(req)) {
       return {
         uid: `guest_${rawGuest.trim().slice(0, 36)}`,
         email: null,
@@ -1677,7 +1686,19 @@ apiRouter.head('/images/:id', async (req, res) => {
 const app = express();
 // Number of reverse proxies in front of the app (Cloud Run / most hosts: 1). Set to 0 if none.
 app.set('trust proxy', Number.isFinite(Number(process.env.TRUST_PROXY_HOPS)) && process.env.TRUST_PROXY_HOPS !== undefined ? Number(process.env.TRUST_PROXY_HOPS) : 1);
-const PORT = Number(process.env.PORT) || 3000;
+function resolvePort(): number {
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    const p = parseInt(process.argv[portArgIdx + 1], 10);
+    if (!isNaN(p) && p > 0) return p;
+  }
+  if (process.env.PORT) {
+    const p = parseInt(process.env.PORT, 10);
+    if (!isNaN(p) && p > 0) return p;
+  }
+  return 3000;
+}
+const PORT = resolvePort();
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));

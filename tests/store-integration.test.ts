@@ -29,12 +29,18 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), DATA_STORE: 'memory', ALLOW_TEST_AUTH: 'true', SESSION_SECRET: 'integration-test-secret-0123456789' };
   delete env.NODE_ENV;
-  const child = spawn('npx', ['tsx', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
+  const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const killChild = () => {
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { child.kill('SIGKILL'); } catch {}
+  };
+  process.on('exit', killChild);
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server did not start')), 40000);
+    let errOut = '';
+    child.stderr.on('data', (d) => { errOut += String(d); });
     child.stdout.on('data', (d) => { if (String(d).includes('running on')) { clearTimeout(t); resolve(); } });
-    child.on('exit', (c) => reject(new Error('server exited early: ' + c)));
+    child.on('exit', (c) => reject(new Error('server exited early: ' + c + (errOut ? '\n' + errOut : ''))));
   });
 
   console.log('Server on the in-memory data store');
@@ -44,6 +50,13 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
     assert.deepEqual([h.ok, h.store, h.fileStorage, h.sharedState], [true, 'memory', true, true]);
     const c: any = await (await fetch(BASE + '/api/config')).json();
     assert.equal(c.maxImageBytes, 10 * 1024 * 1024);
+  });
+
+  await test('the admin test header is refused when the request arrives through a proxy', async () => {
+    // A real internet request reaches a dev server through a proxy, which adds X-Forwarded-For.
+    const r = await fetch(BASE + '/api/admin/verify', { headers: { ...ADMIN, 'X-Forwarded-For': '203.0.113.7' } });
+    assert.equal(r.status, 403);
+    assert.equal((await fetch(BASE + '/api/admin/verify', { headers: ADMIN })).status, 200); // local call still works
   });
 
   await test('an order is really saved (no undefined fields reach the database)', async () => {
@@ -112,7 +125,7 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
     assert.equal(crypto.createHash('sha256').update(back).digest('hex'), crypto.createHash('sha256').update(bytes).digest('hex'));
   });
 
-  child.kill('SIGTERM');
+  killChild();
   console.log(`\n${passed} passed`);
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.error(e.message); process.exit(1); });

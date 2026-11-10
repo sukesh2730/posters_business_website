@@ -20,6 +20,7 @@ import { ContactPage } from './pages/ContactPage';
 import { FAQPage } from './pages/FAQPage';
 import { PolicyPages } from './pages/PolicyPages';
 import { WallBuilderPage } from './pages/WallBuilderPage';
+import { PosterStudioPage } from './pages/PosterStudioPage';
 import { SplitBuilderPage } from './pages/SplitBuilderPage';
 import { MixMatchPage } from './pages/MixMatchPage';
 
@@ -246,8 +247,8 @@ function MainApp() {
           />
         )}
 
-        {currentRoute === 'wall-builder' && (
-          <WallBuilderPage key={routeParam || 'wall'} initialLayoutId={routeParam} onOpenCart={() => setIsCartOpen(true)} />
+        {(currentRoute === 'wall-builder' || currentRoute === 'poster-studio') && (
+          <PosterStudioPage key={routeParam || 'wall'} initialLayoutId={routeParam} onOpenCart={() => setIsCartOpen(true)} onNavigateCatalog={() => handleNavigate('catalog')} />
         )}
 
         {currentRoute === 'split-builder' && (
