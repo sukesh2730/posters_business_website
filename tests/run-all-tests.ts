@@ -13,6 +13,7 @@ const testSuites = [
   { name: 'Wall Layout Manager Utility', script: 'tests/wall-layout-manager.test.ts' },
   { name: 'Server Hardening Helpers', script: 'tests/hardening.test.ts' },
   { name: 'Server Integration (production defaults)', script: 'tests/server-integration.test.ts' },
+  { name: 'Print Export Sizing', script: 'tests/print-export.test.ts' },
   { name: 'Wall Studio and Server Layouts Agree', script: 'tests/layout-sync.test.ts' },
   { name: 'Data Store Backends', script: 'tests/store.test.ts' },
   { name: 'Server on the Data Store (end to end)', script: 'tests/store-integration.test.ts' },

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { BuilderThumb } from '../components/BuilderThumb';
+import { PrintFilesButton } from '../components/PrintFilesButton';
 import { 
   ShieldCheck, 
   Package, 
@@ -1419,16 +1421,32 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBackToStore, onCatalogUp
                             <td className="p-4">
                               <p className="font-medium text-slate-800">{ord.items.length} item(s)</p>
                               <div className="flex gap-1 mt-1">
-                                {ord.items.slice(0, 3).map((it, i) => (
-                                  <img
-                                    key={i}
-                                    src={it.photoUrls[0] || 'https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=60'}
-                                    alt="thumb"
-                                    className="w-7 h-7 rounded object-cover border border-slate-200"
-                                    title={it.productName}
-                                  />
-                                ))}
+                                {ord.items.slice(0, 3).map((it, i) =>
+                                  it.builder ? (
+                                    <div key={i} className="w-7 h-7 rounded overflow-hidden border border-slate-200" title={it.productName}>
+                                      <BuilderThumb builder={it.builder} />
+                                    </div>
+                                  ) : (
+                                    <img
+                                      key={i}
+                                      src={it.photoUrls[0] || 'https://images.unsplash.com/photo-1526047932273-341f2a7631f9?w=60'}
+                                      alt="thumb"
+                                      className="w-7 h-7 rounded object-cover border border-slate-200"
+                                      title={it.productName}
+                                    />
+                                  )
+                                )}
                               </div>
+                              {ord.items.map((it, i) =>
+                                it.builder ? (
+                                  <PrintFilesButton
+                                    key={`pf${i}`}
+                                    builder={it.builder}
+                                    orderNumber={ord.orderNumber}
+                                    label={`Print files: ${it.productName.slice(0, 28)}`}
+                                  />
+                                ) : null
+                              )}
                             </td>
 
                             <td className="p-4 font-black text-slate-900">
