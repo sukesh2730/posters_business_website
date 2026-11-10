@@ -19,7 +19,7 @@ const slots = (n: number) => Array.from({ length: n }, () => ({ type: 'design', 
 
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), SESSION_SECRET: 'integration-test-secret-0123456789', ORDER_WRITE_TIMEOUT_MS: '3000' };
-  delete env.NODE_ENV; delete env.ALLOW_TEST_AUTH;
+  delete env.NODE_ENV; delete env.ALLOW_TEST_AUTH; delete env.SITE_URL; delete env.FIREBASE_SERVICE_ACCOUNT_JSON; env.DOTENV_CONFIG_PATH = '/dev/null';
   const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const killChild = () => {
     try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}

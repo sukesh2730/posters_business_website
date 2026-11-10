@@ -28,7 +28,7 @@ const place = (phone: string, extra: Record<string, unknown> = {}, key = `k-${Da
 
 (async () => {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), DATA_STORE: 'memory', ALLOW_TEST_AUTH: 'true', SESSION_SECRET: 'integration-test-secret-0123456789' };
-  delete env.NODE_ENV;
+  delete env.NODE_ENV; env.DOTENV_CONFIG_PATH = '/dev/null';
   const child = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'server.ts', '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const killChild = () => {
     try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}

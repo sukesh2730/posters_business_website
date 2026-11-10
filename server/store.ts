@@ -253,7 +253,10 @@ export async function createAdminStore(cfg: AdminConfig): Promise<AdminStore> {
   const { getFirestore, FieldValue } = await import('firebase-admin/firestore');
   const { getStorage } = await import('firebase-admin/storage');
 
-  const credential = cfg.serviceAccountJson ? cert(JSON.parse(cfg.serviceAccountJson)) : applicationDefault();
+  let rawJson = cfg.serviceAccountJson?.trim();
+  if (rawJson && !rawJson.startsWith('{')) rawJson = '{' + rawJson;
+  if (rawJson && !rawJson.endsWith('}')) rawJson = rawJson + '}';
+  const credential = rawJson ? cert(JSON.parse(rawJson)) : applicationDefault();
 
   // Check the credentials BEFORE creating any Firestore client. Without valid credentials the
   // SDK fails inside its own background code (an unhandled error that would crash the whole
