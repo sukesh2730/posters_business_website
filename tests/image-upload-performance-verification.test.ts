@@ -188,8 +188,14 @@ async function runSuite() {
   // ----------------------------------------------------
   console.log('\n--- Suite 5: Firestore 1 MiB Safeguard & Oversized Rejection ---');
   try {
-    // Generate an oversized base64 payload (> 700 KB binary)
-    const largeBuffer = Buffer.alloc(750 * 1024, 0x41); // 750 KB
+    // The size limit depends on how the server stores images: 700 KB inside Firestore documents, or 10 MB
+    // when image files go to Cloud Storage. Ask the server, then send something 50 KB over its limit.
+    let maxImageBytes = 700 * 1024;
+    try {
+      const cfg: any = await (await fetch(`${BASE_URL}/api/config`)).json();
+      if (Number.isFinite(cfg?.maxImageBytes)) maxImageBytes = cfg.maxImageBytes;
+    } catch {}
+    const largeBuffer = Buffer.alloc(maxImageBytes + 50 * 1024, 0x41);
     const largeBase64 = largeBuffer.toString('base64');
 
     const oversizedRes = await fetch(`${BASE_URL}/api/upload`, {
@@ -204,7 +210,7 @@ async function runSuite() {
       }),
     });
 
-    assert.strictEqual(oversizedRes.status, 400, 'Oversized payload exceeding 700KB must be rejected');
+    assert.strictEqual(oversizedRes.status, 400, `Oversized payload exceeding ${Math.round(maxImageBytes / 1024)} KB must be rejected`);
     const errJson = await oversizedRes.json();
     assert.ok(
       errJson.error && errJson.error.toLowerCase().includes('limit'),
