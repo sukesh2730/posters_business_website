@@ -27,9 +27,6 @@ import { MixMatchPage } from './pages/MixMatchPage';
 import { getProductsCatalog, getStoreCollections } from './services/orderService';
 import { Product, Order, CollectionInfo } from './types';
 import { DEFAULT_PRODUCTS, COLLECTIONS } from './data/defaultProducts';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from './services/firebase';
-import { handleFirestoreError, OperationType } from './services/firestoreErrorHandler';
 
 function MainApp() {
   const { currentUser, isAdmin } = useAuth();
@@ -69,21 +66,12 @@ function MainApp() {
   useEffect(() => {
     refreshCatalogAndCollections();
 
-    // Real-time synchronization when images/products are added or updated
-    try {
-      const unsubscribe = onSnapshot(
-        collection(db, 'products'),
-        () => {
-          refreshCatalogAndCollections();
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.GET, 'products');
-        }
-      );
-      return () => unsubscribe();
-    } catch {
-      // Offline fallback
-    }
+    // The catalogue is shared and cached by the server, so we simply look again every few minutes
+    // (instead of a live listener per visitor, which re-read every product on every change).
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshCatalogAndCollections();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   // Parse route navigation helper

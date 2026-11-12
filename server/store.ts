@@ -19,6 +19,8 @@ export interface DataStore {
   readonly supportsBlobs: boolean;
   /** can run cross-order queries and shared counters (needed for one-time coupons and limits) */
   readonly supportsSharedState: boolean;
+  /** where image files live, when supportsBlobs is true (for /api/health) */
+  readonly blobProvider?: string;
   getDoc(col: string, id: string): Promise<Doc | null>;
   setDoc(col: string, id: string, data: Doc): Promise<void>;
   /** Creates the document only if it does not exist. Returns false if it already existed. */
@@ -39,6 +41,7 @@ const hashKey = (k: string) => crypto.createHash('sha1').update(k).digest('hex')
 export class MemoryStore implements DataStore {
   readonly mode = 'memory' as const;
   readonly supportsBlobs = true;
+  readonly blobProvider = 'memory';
   readonly supportsSharedState = true;
   private cols = new Map<string, Map<string, Doc>>();
   private blobs = new Map<string, Buffer>();
@@ -124,6 +127,9 @@ export class AdminStore implements DataStore {
   ) {}
   get supportsBlobs() {
     return !!this.bucket;
+  }
+  get blobProvider() {
+    return this.bucket ? 'firebase-storage' : undefined;
   }
   async getDoc(col: string, id: string) {
     const s = await this.fs.collection(col).doc(id).get();
