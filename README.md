@@ -48,6 +48,13 @@ SESSION_SECRET=<32+ random characters> npm start
 - Photo links must be durable (`/api/images/...` or `https://`). `blob:`, `data:` and `javascript:` links are rejected.
 - Admin access requires a verified Firebase account listed in the admin check.
 
+## Staying inside the free tiers
+
+Cloud Firestore's free plan allows 50,000 reads and 20,000 writes per day and stores 1 GiB. Two things keep a store inside that:
+
+- **Cached catalogue.** The server reads products and collections once every 5 minutes and serves everyone from memory (`GET /api/catalog`). A page load costs no database reads. Admin changes call `/api/admin/catalog/refresh`, so edits show up immediately. `/api/health` shows `catalog: {loads, hits}` so you can see it working.
+- **Photos outside Firestore.** Firebase's own Cloud Storage is no longer free. Set the four `R2_*` variables (see `.env.example`) to keep photos in a private Cloudflare R2 bucket (10 GB free, free downloads). Photos are still served through your server, which checks who may see each one. `/api/health` shows `"imageProvider":"r2"` when it is working. If the bucket cannot be reached the server logs why and carries on with photos inside Firestore (700 KB limit).
+
 ## Print files for builder orders
 
 In the admin orders table, every wall, mix-and-match pack and split poster has a **Print files** button. It builds a ZIP in the admin's browser (nothing is uploaded) containing:
@@ -85,6 +92,7 @@ The server can talk to Firebase in two ways. **Admin mode** (Firebase Admin SDK)
 - `tests/print-builders.test.ts` wall, split and pack pricing and validation
 - `tests/hardening.test.ts` order-write safety, photo links, caches
 - `tests/store.test.ts` the database layer (memory and Admin backends, with a faithful stand-in for Firestore)
+- `tests/blob.test.ts` and `tests/blob-integration.test.ts` free image storage (R2 / S3) and the catalogue cache
 - `tests/store-integration.test.ts` the real server end to end: saving orders, retries, one-time coupons, order limits, 10 MB photos
 - `tests/server-integration.test.ts` the server started the way a careless deploy would, with only `SESSION_SECRET`
 - `tests/print-export.test.ts` print-file sizing (300 dpi panels for every set and size)

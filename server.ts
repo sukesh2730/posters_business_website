@@ -16,6 +16,7 @@ import {
   withTimeout,
 } from './server/hardening';
 import { AdminStore, ClientStore, DataStore, MemoryStore, createAdminStore } from './server/store';
+import { BlobOverlayStore, createS3Backend, s3ConfigFromEnv } from './server/blobBackends';
 
 export interface AuthenticatedUser {
   uid: string;
@@ -67,7 +68,7 @@ process.on('unhandledRejection', (reason: any) => {
   logSecurityEvent('UNHANDLED_REJECTION', { error: String(reason?.message || reason).slice(0, 300) });
 });
 
-async function initDataStore() {
+async function chooseBaseStore() {
   if (process.env.DATA_STORE === 'memory' && !isProduction) {
     store = new MemoryStore();
     console.warn('Data store: IN-MEMORY (development/testing only; nothing is saved to disk).');
@@ -92,6 +93,25 @@ async function initDataStore() {
         'and the server-only Firestore rules must NOT be deployed. See README "Admin mode".'
     );
   }
+}
+
+/** Free image storage (Cloudflare R2 or any S3-compatible bucket) replaces Firebase Storage when configured. */
+async function attachImageStorage() {
+  const cfg = s3ConfigFromEnv(process.env);
+  if (!cfg) return;
+  try {
+    const backend = createS3Backend(cfg);
+    await backend.check();
+    store = new BlobOverlayStore(store, backend);
+    console.log(`Image storage: ${backend.name} bucket "${cfg.bucket}" (photos up to 10 MB).`);
+  } catch (err: any) {
+    console.warn(`Image storage: ${cfg.bucket ? 'R2' : 'S3'} is configured but unusable (${err?.message || err}). Photos stay inside Firestore (700 KB limit).`);
+  }
+}
+
+async function initDataStore() {
+  await chooseBaseStore();
+  await attachImageStorage();
 }
 
 // ----------------------------------------------------
@@ -1426,8 +1446,66 @@ apiRouter.get('/admin/verify', async (req, res) => {
   });
 });
 
+// ----------------------------------------------------
+// Catalogue cache: products and collections are read from the database once per few minutes and shared
+// by every visitor, instead of every page load reading every product (which burns the free daily quota).
+// ----------------------------------------------------
+const CATALOG_TTL_MS = Math.max(10, Number(process.env.CATALOG_CACHE_SECONDS) || 300) * 1000;
+let catalogCache: { at: number; body: string; etag: string } | null = null;
+let catalogInflight: Promise<{ at: number; body: string; etag: string }> | null = null;
+const catalogStats = { loads: 0, hits: 0, stale: 0 };
+let catalogVersion = 0; // bumped on every admin change so an in-flight load never caches old data
+
+async function loadCatalog(force = false) {
+  if (!force && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    catalogStats.hits++;
+    return catalogCache;
+  }
+  if (catalogInflight) return catalogInflight; // several visitors at once share one database read
+  const startedAt = catalogVersion;
+  catalogInflight = (async () => {
+    const [products, collections] = await Promise.all([store.listDocs('products'), store.listDocs('collections')]);
+    const body = JSON.stringify({ products, collections });
+    const fresh = { at: Date.now(), body, etag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 20)}"` };
+    catalogStats.loads++;
+    if (startedAt === catalogVersion) catalogCache = fresh; // changed meanwhile: serve it once, reload next time
+    return fresh;
+  })().finally(() => {
+    catalogInflight = null;
+  });
+  return catalogInflight;
+}
+
+apiRouter.get('/catalog', async (req, res) => {
+  try {
+    const c = await loadCatalog();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('ETag', c.etag);
+    if (req.headers['if-none-match'] === c.etag) return res.status(304).end();
+    return res.type('json').send(c.body);
+  } catch (err: any) {
+    if (catalogCache) {
+      catalogStats.stale++; // database hiccup: serve the last good copy rather than an empty store
+      res.setHeader('Cache-Control', 'public, max-age=30');
+      return res.type('json').send(catalogCache.body);
+    }
+    return res.status(503).json({ error: 'Catalogue is temporarily unavailable.' });
+  }
+});
+
+// Admins call this after changing products or collections so the change shows up immediately.
+apiRouter.post('/admin/catalog/refresh', async (req, res) => {
+  const authUser = await verifyRequestAuth(req);
+  if (!authUser || !isAuthorizedAdmin(authUser)) {
+    return res.status(403).json({ error: 'Forbidden: Administrator access required.' });
+  }
+  catalogVersion++;
+  catalogCache = null; // the next visitor reloads it once; everyone after that is served from memory
+  return res.json({ success: true });
+});
+
 apiRouter.get('/health', (_req, res) => {
-  res.json({ ok: true, store: store.mode, fileStorage: store.supportsBlobs, sharedState: store.supportsSharedState });
+  res.json({ ok: true, store: store.mode, fileStorage: store.supportsBlobs, imageProvider: store.blobProvider || null, sharedState: store.supportsSharedState, catalog: { ...catalogStats } });
 });
 
 // Lets the browser know how large an upload the server will accept.

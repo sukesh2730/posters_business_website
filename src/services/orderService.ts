@@ -287,13 +287,63 @@ export function resolveProductImageUrl(product: Partial<Product> | null | undefi
   return CATEGORY_FALLBACK_IMAGES[category] || DEFAULT_FALLBACK_PRODUCT_IMAGE;
 }
 
+// ---- Cached catalogue -------------------------------------------------------------------------------
+// The server reads products and collections once every few minutes and shares them with every visitor,
+// so a page load costs no database reads. If the server cannot answer we read Firestore directly.
+interface CatalogSnap {
+  empty: boolean;
+  size: number;
+  forEach(cb: (d: { id: string; data: () => any }) => void): void;
+}
+let catalogPromise: Promise<{ products: any[]; collections: any[] } | null> | null = null;
+let catalogFetchedAt = 0;
+const CATALOG_CLIENT_TTL_MS = 60_000;
+
+function fetchCatalogPayload() {
+  if (catalogPromise && Date.now() - catalogFetchedAt < CATALOG_CLIENT_TTL_MS) return catalogPromise;
+  catalogFetchedAt = Date.now();
+  catalogPromise = (async () => {
+    try {
+      const r = await fetch('/api/catalog');
+      if (!r.ok) return null;
+      const j = await r.json();
+      return Array.isArray(j?.products) && Array.isArray(j?.collections) ? j : null;
+    } catch {
+      return null;
+    }
+  })();
+  return catalogPromise;
+}
+
+async function readCatalogCollection(path: 'products' | 'collections'): Promise<CatalogSnap> {
+  const payload = await fetchCatalogPayload();
+  if (payload) {
+    const docs: any[] = path === 'products' ? payload.products : payload.collections;
+    return { empty: docs.length === 0, size: docs.length, forEach: (cb) => docs.forEach((d) => cb({ id: d.id, data: () => d })) };
+  }
+  catalogPromise = null; // do not remember a failure
+  return (await getDocs(collection(db, path))) as unknown as CatalogSnap;
+}
+
+/** Admins: call after changing products or collections so the change is visible right away. */
+export async function bustCatalogCache(): Promise<void> {
+  catalogPromise = null;
+  catalogFetchedAt = 0;
+  try {
+    const token = await auth.currentUser?.getIdToken();
+    if (token) await fetch('/api/admin/catalog/refresh', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    // the server cache still expires on its own within a few minutes
+  }
+}
+
 // 8. Fetch products catalog from Firestore, merging custom uploads with default catalog baseline
 export async function getProductsCatalog(): Promise<Product[]> {
   const path = 'products';
   try {
     console.log('[orderService] Fetching products catalog from Firestore collection:', path);
-    const snap = await getDocs(collection(db, path));
-    console.log(`[orderService] Retrieved ${snap.size} product documents from Firestore.`);
+    const snap = await readCatalogCollection('products');
+    console.log(`[orderService] Retrieved ${snap.size} product documents.`);
 
     if (!snap.empty) {
       const firestoreItems: Product[] = [];
@@ -387,6 +437,7 @@ export async function seedProductsToFirestore(): Promise<number> {
       handleFirestoreError(error, OperationType.WRITE, `${path}/${prod.id}`);
     }
   }
+  await bustCatalogCache();
   return count;
 }
 
@@ -399,6 +450,7 @@ export async function saveProductToFirestore(product: Product): Promise<void> {
       updatedAt: new Date().toISOString(),
     });
     await setDoc(doc(db, 'products', product.id), cleanProduct);
+    await bustCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -409,6 +461,7 @@ export async function deleteProductFromFirestore(productId: string): Promise<voi
   const path = `products/${productId}`;
   try {
     await deleteDoc(doc(db, 'products', productId));
+    await bustCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -418,7 +471,7 @@ export async function deleteProductFromFirestore(productId: string): Promise<voi
 export async function getStoreCollections(): Promise<import('../types').CollectionInfo[]> {
   const path = 'collections';
   try {
-    const snap = await getDocs(collection(db, path));
+    const snap = await readCatalogCollection('collections');
     if (!snap.empty) {
       const cols: import('../types').CollectionInfo[] = [];
       snap.forEach((d) => {
@@ -440,6 +493,7 @@ export async function saveCollectionToFirestore(col: import('../types').Collecti
   try {
     const cleanCol = sanitizeFirestoreData(col);
     await setDoc(doc(db, 'collections', col.id), cleanCol);
+    await bustCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -450,6 +504,7 @@ export async function deleteCollectionFromFirestore(colId: string): Promise<void
   const path = `collections/${colId}`;
   try {
     await deleteDoc(doc(db, 'collections', colId));
+    await bustCatalogCache();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
