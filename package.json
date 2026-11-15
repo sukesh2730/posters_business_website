@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1166.0",
-    "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",
     "canvas-confetti": "^1.9.4",
