@@ -169,6 +169,144 @@ function wrapTitle(title: string): string[] {
   return lines.slice(0, 3);
 }
 
+// ------------------------------------------------------------------------------------------------
+// Tamil & Malayalam slang posters: a bold colour background, the word in huge letters, its English
+// meaning underneath and a small icon. The word IS the design, so it is always drawn (even in thumbnails).
+// ------------------------------------------------------------------------------------------------
+function starPoints(cx: number, cy: number, outer: number, inner: number) {
+  return Array.from({ length: 10 }, (_, i) => {
+    const a = (Math.PI / 5) * i - Math.PI / 2;
+    const r = i % 2 ? inner : outer;
+    return `${(cx + Math.cos(a) * r).toFixed(1)},${(cy + Math.sin(a) * r).toFixed(1)}`;
+  }).join(' ');
+}
+
+function SlangIconArt({ icon, accent, ink, bg }: { icon: string; accent: string; ink: string; bg: string }) {
+  const cx = 150;
+  const cy = 98;
+  switch (icon) {
+    case 'star':
+      return <polygon points={starPoints(cx, cy, 36, 15)} fill={accent} />;
+    case 'moon':
+      return (
+        <g>
+          <circle cx={cx - 6} cy={cy} r={34} fill={accent} />
+          <circle cx={cx + 10} cy={cy - 8} r={30} fill={bg} />
+          <g fontFamily="'Plus Jakarta Sans', system-ui, sans-serif" fontWeight={900} fill={ink}>
+            <text x={cx + 28} y={cy - 14} fontSize={24}>z</text>
+            <text x={cx + 46} y={cy - 34} fontSize={32}>z</text>
+          </g>
+        </g>
+      );
+    case 'arrow':
+      return (
+        <g fill="none" stroke={accent} strokeWidth={13} strokeLinecap="round" strokeLinejoin="round">
+          <polyline points={`${cx - 34},${cy + 14} ${cx},${cy - 20} ${cx + 34},${cy + 14}`} />
+          <polyline points={`${cx - 34},${cy + 44} ${cx},${cy + 10} ${cx + 34},${cy + 44}`} />
+        </g>
+      );
+    case 'tea':
+      return (
+        <g>
+          <path d={`M${cx - 30} ${cy - 16} L${cx + 26} ${cy - 16} L${cx + 19} ${cy + 36} Q${cx} ${cy + 42} ${cx - 17} ${cy + 36} Z`} fill={accent} />
+          <path d={`M${cx + 26} ${cy - 4} Q${cx + 50} ${cy - 2} ${cx + 45} ${cy + 18} Q${cx + 41} ${cy + 30} ${cx + 21} ${cy + 26}`} fill="none" stroke={accent} strokeWidth={7} strokeLinecap="round" />
+          <g fill="none" stroke={ink} strokeWidth={5} strokeLinecap="round" opacity={0.55}>
+            <path d={`M${cx - 16} ${cy - 26} q-8 -10 0 -20 q8 -10 0 -20`} />
+            <path d={`M${cx + 4} ${cy - 26} q-8 -10 0 -20 q8 -10 0 -20`} />
+          </g>
+        </g>
+      );
+    case 'plate':
+      return (
+        <g>
+          <circle cx={cx} cy={cy} r={38} fill="none" stroke={accent} strokeWidth={9} />
+          <circle cx={cx} cy={cy} r={22} fill={accent} opacity={0.4} />
+        </g>
+      );
+    case 'drop':
+      return <path d={`M${cx} ${cy - 38} C${cx} ${cy - 38} ${cx - 32} ${cy} ${cx - 32} ${cy + 20} A32 32 0 0 0 ${cx + 32} ${cy + 20} C${cx + 32} ${cy} ${cx} ${cy - 38} ${cx} ${cy - 38} Z`} fill={accent} />;
+    default:
+      return null;
+  }
+}
+
+function SlangArt({ design, className }: { design: PosterDesign; className?: string }) {
+  const [c1, c2, accent, ink] = design.palette;
+  const look = design.look || 'solid';
+  const lines = design.title.toUpperCase().split(' ');
+  const longest = Math.max(...lines.map((l) => l.length));
+  // Heavy capitals are about 0.72 of the font size wide per letter. The exact width is also set with
+  // textLength below, so a word always fits the poster whatever font the device falls back to.
+  const size = Math.max(40, Math.min(92, 252 / (longest * 0.72)));
+  const hasIcon = !!design.icon && design.icon !== 'none';
+  const firstY = lines.length === 1 ? (hasIcon ? 252 : 236) : hasIcon ? 218 : 200;
+  const lastY = firstY + (lines.length - 1) * size * 0.95;
+  const subY = lastY + 40;
+  const font = "'Plus Jakarta Sans', 'Arial Black', system-ui, sans-serif";
+
+  let background: React.ReactNode;
+  if (look === 'stripes') {
+    background = (
+      <g>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <rect key={i} x={i * 60} y={0} width={60} height={H} fill={i % 2 ? c2 : c1} />
+        ))}
+        <rect x={0} y={firstY - size * 0.85 - 12} width={W} height={subY - firstY + size * 0.85 + 30} fill={accent} />
+      </g>
+    );
+  } else if (look === 'split') {
+    background = (
+      <g>
+        <rect width={150} height={H} fill={c1} />
+        <rect x={150} width={150} height={H} fill={c2} />
+      </g>
+    );
+  } else if (look === 'burst') {
+    background = (
+      <g>
+        <rect width={W} height={H} fill={c1} />
+        {Array.from({ length: 20 }).map((_, i) => {
+          const a = (i / 20) * Math.PI * 2;
+          const a2 = ((i + 1) / 20) * Math.PI * 2;
+          return i % 2 ? null : (
+            <polygon key={i} points={`150,230 ${150 + Math.cos(a) * 420},${230 + Math.sin(a) * 420} ${150 + Math.cos(a2) * 420},${230 + Math.sin(a2) * 420}`} fill={c2} />
+          );
+        })}
+      </g>
+    );
+  } else if (look === 'dots') {
+    const dots: React.ReactNode[] = [];
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 12; x++) {
+      const r = 2 + ((x + y) % 5) * 1.3;
+      dots.push(<circle key={`${x}-${y}`} cx={x * 28 + (y % 2) * 14} cy={y * 28} r={r} fill={ink} opacity={0.14} />);
+    }
+    background = (<g><rect width={W} height={H} fill={c1} />{dots}</g>);
+  } else {
+    background = <rect width={W} height={H} fill={c1} />;
+  }
+
+  const bgForCutout = look === 'split' ? c1 : c1;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice" className={className} role="img" aria-label={`${design.title}: ${design.subtitle}`}>
+      {background}
+      {hasIcon && <SlangIconArt icon={design.icon!} accent={accent} ink={ink} bg={bgForCutout} />}
+      <g fontFamily={font} fontWeight={900} fill={ink} textAnchor="middle">
+        {lines.map((line, i) => (
+          <text key={i} x={150} y={firstY + i * size * 0.95} fontSize={size} textLength={Math.min(252, line.length * size * 0.72)} lengthAdjust="spacingAndGlyphs">
+            {line}
+          </text>
+        ))}
+        <text x={150} y={subY} fontSize={20} fontWeight={700} letterSpacing={0.5} opacity={0.9}>
+          {design.subtitle}
+        </text>
+        <text x={150} y={H - 24} fontSize={11} fontWeight={800} letterSpacing={4} opacity={0.55}>
+          {design.lang === 'ml' ? 'MALAYALAM' : 'TAMIL'}
+        </text>
+      </g>
+    </svg>
+  );
+}
+
 interface PosterArtProps {
   design: PosterDesign;
   className?: string;
@@ -178,6 +316,9 @@ interface PosterArtProps {
 export const PosterArt: React.FC<PosterArtProps> = ({ design, className, showTitle = true }) => {
   if (design.imageUrl) {
     return <img src={design.imageUrl} alt={design.title} className={className} style={{ objectFit: 'cover' }} />;
+  }
+  if (design.theme === 'slang') {
+    return <SlangArt design={design} className={className} />;
   }
   const [c1, c2, , ink] = design.palette;
   const gid = `g-${design.id}`;

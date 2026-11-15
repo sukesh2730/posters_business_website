@@ -15,6 +15,7 @@ const testSuites = [
   { name: 'Server Integration (production defaults)', script: 'tests/server-integration.test.ts' },
   { name: 'Print Export Sizing', script: 'tests/print-export.test.ts' },
   { name: 'Wall Studio and Server Layouts Agree', script: 'tests/layout-sync.test.ts' },
+  { name: 'Tamil and Malayalam Slang Theme', script: 'tests/slang-theme.test.ts' },
   { name: 'Data Store Backends', script: 'tests/store.test.ts' },
   { name: 'Free Image Storage (S3 / R2)', script: 'tests/blob.test.ts' },
   { name: 'Image Storage and Catalogue Cache (end to end)', script: 'tests/blob-integration.test.ts' },

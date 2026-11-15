@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { POSTER_THEMES, PosterThemeId, designsByTheme, PosterDesign } from '../shared/posterDesigns';
 import { PosterArt } from './PosterArt';
 
@@ -19,9 +19,16 @@ export const DesignPicker: React.FC<DesignPickerProps> = ({
   columns = 'grid-cols-3 sm:grid-cols-4',
 }) => {
   const designs = useMemo(() => designsByTheme(theme), [theme]);
+  const chipRow = useRef<HTMLDivElement>(null);
+  // Arriving with a theme already chosen (for example from a homepage tile): bring its chip into view.
+  useEffect(() => {
+    const row = chipRow.current;
+    const active = row?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (row && active) row.scrollLeft = active.offsetLeft - row.clientWidth / 2 + active.clientWidth / 2;
+  }, [theme]);
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1" role="tablist" aria-label="Poster themes">
+      <div ref={chipRow} className="flex gap-2 overflow-x-auto scrollbar-none pb-1 relative" role="tablist" aria-label="Poster themes">
         {[{ id: 'all' as const, label: 'All' }, ...POSTER_THEMES].map((t) => (
           <button
             key={t.id}

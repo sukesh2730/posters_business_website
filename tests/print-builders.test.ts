@@ -116,9 +116,9 @@ test('sanitizeBuilder drops fields the client added', () => {
   assert.deepEqual(Object.keys(clean).sort(), ['designIds', 'kind', 'tierId']);
 });
 
-test('catalog covers all nine themes with 8 designs each', () => {
-  assert.equal(POSTER_THEMES.length, 9);
-  for (const t of POSTER_THEMES) assert.equal(POSTER_DESIGNS.filter((d) => d.theme === t.id).length, 8, t.id);
+test('catalog has ten themes, each with at least 8 designs, and unique ids', () => {
+  assert.equal(POSTER_THEMES.length, 10);
+  for (const t of POSTER_THEMES) assert.ok(POSTER_DESIGNS.filter((d) => d.theme === t.id).length >= 8, t.id);
   assert.equal(new Set(POSTER_DESIGNS.map((d) => d.id)).size, POSTER_DESIGNS.length);
 });
 

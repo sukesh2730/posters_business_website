@@ -12,7 +12,8 @@ export type PosterThemeId =
   | 'movies'
   | 'gym'
   | 'divine'
-  | 'kollywood';
+  | 'kollywood'
+  | 'slang';
 
 export interface PosterTheme {
   id: PosterThemeId;
@@ -30,6 +31,7 @@ export const POSTER_THEMES: PosterTheme[] = [
   { id: 'gym', label: 'Gym & Quotes', tagline: 'Discipline you can read from the bed' },
   { id: 'divine', label: 'Divine', tagline: 'Calm, devotional and sacred geometry' },
   { id: 'kollywood', label: 'Kollywood', tagline: 'Chennai street, screen and sunset' },
+  { id: 'slang', label: 'Tamil & Malayalam', tagline: 'Everyday slang on bold colour blocks' },
 ];
 
 export interface PosterDesign {
@@ -40,9 +42,19 @@ export interface PosterDesign {
   palette: [string, string, string, string];
   seed: number;
   imageUrl?: string;
+  /** Slang designs only: what the word means in English, which language it is, and how it is drawn. */
+  subtitle?: string;
+  lang?: 'ta' | 'ml';
+  look?: SlangLook;
+  icon?: SlangIcon;
 }
 
-const PALETTES: Record<PosterThemeId, Array<[string, string, string, string]>> = {
+export type SlangLook = 'solid' | 'burst' | 'stripes' | 'split' | 'dots';
+export type SlangIcon = 'star' | 'moon' | 'arrow' | 'tea' | 'plate' | 'drop' | 'none';
+
+type ClassicThemeId = Exclude<PosterThemeId, 'slang'>;
+
+const PALETTES: Record<ClassicThemeId, Array<[string, string, string, string]>> = {
   cars: [
     ['#0f172a', '#1e293b', '#f97316', '#f8fafc'],
     ['#1c1917', '#44403c', '#facc15', '#fafaf9'],
@@ -99,7 +111,7 @@ const PALETTES: Record<PosterThemeId, Array<[string, string, string, string]>> =
   ],
 };
 
-const TITLES: Record<PosterThemeId, string[]> = {
+const TITLES: Record<ClassicThemeId, string[]> = {
   cars: ['Midnight Coupe', 'Apex Corner', 'Turbo Dawn', 'Gravel Hero', 'Neon Drift', 'Long Straight', 'Garage Light', 'Redline'],
   heroes: ['The Caped Guardian', 'Neon Vigilante', 'Last Sentinel', 'Skyline Watcher', 'Iron Resolve', 'Shadow Runner', 'Thunder Fist', 'Rooftop Hero'],
   gaming: ['Pixel Quest', 'Boss Level', 'Respawn', 'Player Two', 'High Score', 'Dungeon Crawl', 'Final Stage', 'Co-op Night'],
@@ -111,15 +123,54 @@ const TITLES: Record<PosterThemeId, string[]> = {
   kollywood: ['Chennai Kuthu', 'Marina Sunset', 'Filter Coffee', 'Mass Entry', 'Auto Rickshaw', 'Jasmine Evenings', 'Pongal Morning', 'First Day First Show'],
 };
 
-export const POSTER_DESIGNS: PosterDesign[] = POSTER_THEMES.flatMap((theme, themeIdx) =>
-  TITLES[theme.id].map((title, i) => ({
+const CLASSIC_DESIGNS: PosterDesign[] = POSTER_THEMES.filter((t) => t.id !== 'slang').flatMap((theme, themeIdx) =>
+  TITLES[theme.id as ClassicThemeId].map((title, i) => ({
     id: `${theme.id}-${i + 1}`,
     theme: theme.id,
     title,
-    palette: PALETTES[theme.id][i % PALETTES[theme.id].length],
+    palette: PALETTES[theme.id as ClassicThemeId][i % PALETTES[theme.id as ClassicThemeId].length],
     seed: (themeIdx + 1) * 101 + (i + 1) * 17,
   }))
 );
+
+// ---------------------------------------------------------------------------------------------
+// Tamil & Malayalam slang. Original wording and artwork only: no film titles, no dialogue from films,
+// no real people. Words are written in English letters. Ask a native speaker to check meanings
+// and spelling before you print.
+// palette = [colour 1, colour 2, accent, ink]
+// ---------------------------------------------------------------------------------------------
+const SLANG: Array<{ word: string; meaning: string; lang: 'ta' | 'ml'; look: SlangLook; icon: SlangIcon; palette: [string, string, string, string] }> = [
+  { word: 'Semma', meaning: 'Awesome', lang: 'ta', look: 'burst', icon: 'star', palette: ['#FFC914', '#FFB300', '#111111', '#111111'] },
+  { word: 'Vera Level', meaning: 'Next level', lang: 'ta', look: 'stripes', icon: 'arrow', palette: ['#FF9A0B', '#00D4FF', '#111111', '#FFFFFF'] },
+  { word: 'Machi', meaning: 'Buddy', lang: 'ta', look: 'split', icon: 'none', palette: ['#2AA9A0', '#FFFFFF', '#111111', '#0F172A'] },
+  { word: 'Thoongu', meaning: 'Sleep', lang: 'ta', look: 'solid', icon: 'moon', palette: ['#FFC914', '#FFC914', '#111111', '#111111'] },
+  { word: 'Kalakkal', meaning: 'Brilliant', lang: 'ta', look: 'burst', icon: 'star', palette: ['#D7263D', '#B81E32', '#FFE9A8', '#FFFFFF'] },
+  { word: 'Mokka', meaning: 'Lame joke', lang: 'ta', look: 'dots', icon: 'none', palette: ['#6A3AB2', '#6A3AB2', '#FFFFFF', '#FFFFFF'] },
+  { word: 'Paavam', meaning: 'Poor thing', lang: 'ta', look: 'solid', icon: 'drop', palette: ['#FF8FA3', '#FF8FA3', '#3B0A1E', '#3B0A1E'] },
+  { word: 'Saapadu', meaning: 'Meal time', lang: 'ta', look: 'split', icon: 'plate', palette: ['#FF9A0B', '#FFF4D6', '#7A2E00', '#3A1A00'] },
+  { word: 'Ayyo', meaning: 'Oh no!', lang: 'ta', look: 'stripes', icon: 'none', palette: ['#111111', '#FFC914', '#FFC914', '#111111'] },
+  { word: 'Adipoli', meaning: 'Fantastic', lang: 'ml', look: 'burst', icon: 'star', palette: ['#0F7A3F', '#0B6A36', '#FFFFFF', '#FFFFFF'] },
+  { word: 'Pwoli', meaning: 'Superb', lang: 'ml', look: 'dots', icon: 'none', palette: ['#FF6B2C', '#FF6B2C', '#2A0F00', '#2A0F00'] },
+  { word: 'Mwone', meaning: 'Dear friend', lang: 'ml', look: 'solid', icon: 'none', palette: ['#6A3AB2', '#6A3AB2', '#FFD84D', '#FFFFFF'] },
+  { word: 'Chetta', meaning: 'Big brother', lang: 'ml', look: 'split', icon: 'none', palette: ['#2AA9A0', '#FFFFFF', '#111111', '#0F172A'] },
+  { word: 'Kidu', meaning: 'Awesome', lang: 'ml', look: 'stripes', icon: 'arrow', palette: ['#00D4FF', '#FF9A0B', '#111111', '#FFFFFF'] },
+  { word: 'Pinne', meaning: 'Of course!', lang: 'ml', look: 'solid', icon: 'none', palette: ['#C1121F', '#C1121F', '#FFE9A8', '#FFF4D6'] },
+  { word: 'Chaya', meaning: 'Tea', lang: 'ml', look: 'solid', icon: 'tea', palette: ['#F6E7C1', '#F6E7C1', '#9A4A12', '#5A2D0C'] },
+];
+
+const SLANG_DESIGNS: PosterDesign[] = SLANG.map((d, i) => ({
+  id: `slang-${i + 1}`,
+  theme: 'slang' as const,
+  title: d.word,
+  palette: d.palette,
+  seed: 1000 + i * 13,
+  subtitle: d.meaning,
+  lang: d.lang,
+  look: d.look,
+  icon: d.icon,
+}));
+
+export const POSTER_DESIGNS: PosterDesign[] = [...CLASSIC_DESIGNS, ...SLANG_DESIGNS];
 
 const DESIGN_INDEX = new Map(POSTER_DESIGNS.map((d) => [d.id, d]));
 

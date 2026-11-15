@@ -105,7 +105,7 @@ export const PosterShowcase: React.FC<PosterShowcaseProps> = ({ products, onNavi
 
       <section className="space-y-5" aria-label="Shop by theme">
         <Heading title="Shop by theme" sub="Start a pack with the posters you like." />
-        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3">
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-3">
           {POSTER_THEMES.map((t) => (
             <button key={t.id} type="button" onClick={() => onNavigate(`mix-match?cat=${t.id}`)}
               className="text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded-xl" title={t.tagline}>
