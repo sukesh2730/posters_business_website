@@ -48,6 +48,12 @@ SESSION_SECRET=<32+ random characters> npm start
 - Photo links must be durable (`/api/images/...` or `https://`). `blob:`, `data:` and `javascript:` links are rejected.
 - Admin access requires a verified Firebase account listed in the admin check.
 
+## Tamil & Malayalam slang posters
+
+The "Tamil & Malayalam" theme has 16 original designs (Semma, Vera Level, Machi, Thoongu, Kalakkal, Mokka, Paavam, Saapadu, Ayyo, Adipoli, Pwoli, Mwone, Chetta, Kidu, Pinne, Chaya), each on a bold colour block with the word, its English meaning and a small icon. They are drawn in code (`src/shared/posterDesigns.ts`, `src/components/PosterArt.tsx`), so there are no image files, no film titles or dialogue, and no real people. They work everywhere the other designs do: wall builder, studio, split posters, mix packs and print files.
+
+**Before you print:** have a native Tamil and Malayalam speaker confirm each meaning and spelling. To add or change a word, edit the `SLANG` list in `posterDesigns.ts` (a test checks that colours are readable and that no film titles or names slip in).
+
 ## Staying inside the free tiers
 
 Cloud Firestore's free plan allows 50,000 reads and 20,000 writes per day and stores 1 GiB. Two things keep a store inside that:
